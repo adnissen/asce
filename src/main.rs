@@ -26,10 +26,13 @@
 //! The `raw-window-handle` crate is included as a dependency, which provides
 //! cross-platform window handle abstraction used by graphics APIs like wgpu.
 
+mod video_player;
+
 use gpui::{
     AnyWindowHandle, App, Application, Context, Global, Menu, MenuItem, PathPromptOptions,
     SystemMenuType, Window, WindowOptions, actions, div, prelude::*, rgb,
 };
+use std::sync::{Arc, Mutex};
 
 struct SetMenus;
 
@@ -55,6 +58,15 @@ impl Render for SetMenus {
 }
 
 fn main() {
+    // Initialize GStreamer before creating the GPUI application
+    if let Err(e) = video_player::init() {
+        eprintln!("Failed to initialize GStreamer: {}", e);
+        eprintln!(
+            "Make sure GStreamer is installed: brew install gstreamer gst-plugins-base gst-plugins-good"
+        );
+        std::process::exit(1);
+    }
+
     Application::new().run(|cx: &mut App| {
         cx.set_global(AppState::new());
 
@@ -79,12 +91,47 @@ fn main() {
 
         // Log information about the window handle (for demonstration)
         println!("Window created with handle: {:?}", window);
+
+        // Extract and set the NSView handle for the video player
+        // Note: This requires accessing GPUI internals
+        extract_and_set_window_handle(cx);
     });
+}
+
+/// Extract the native NSView handle from GPUI and set it on the video player
+///
+/// IMPORTANT: This function uses GPUI internals to access the native window handle.
+/// GPUI's current API doesn't expose the raw window handle in a straightforward way,
+/// so this is a workaround that may need to be updated if GPUI's internals change.
+fn extract_and_set_window_handle(cx: &mut App) {
+    let app_state = cx.global::<AppState>();
+    let _video_player = app_state.video_player.clone();
+
+    if let Some(_window_handle) = app_state.window_handle() {
+        // TODO: Extract the raw NSView handle from GPUI's AnyWindowHandle
+        //
+        // CHALLENGE: GPUI's current API doesn't expose the raw window handle directly.
+        // GPUI's Window type doesn't implement HasWindowHandle, and the PlatformWindow
+        // (which does) is not publicly accessible.
+        //
+        // WORKAROUND OPTIONS:
+        // 1. Wait for GPUI to expose raw window handles more easily
+        // 2. Fork GPUI and add a public method to get the raw handle
+        // 3. Use platform-specific code to get the handle from NSApplication
+        //
+        // For now, the window handle must be set manually or via GPUI API enhancement.
+        // The video player will work once the window handle is properly set.
+
+        println!("Window handle available but extraction not yet implemented");
+        println!("Video overlay may not work until window handle is properly set");
+        println!("TODO: Implement window handle extraction from GPUI");
+    }
 }
 
 struct AppState {
     file_path: Option<String>,
     window_handle: Option<AnyWindowHandle>,
+    video_player: Arc<Mutex<video_player::VideoPlayer>>,
 }
 
 impl AppState {
@@ -92,6 +139,7 @@ impl AppState {
         Self {
             file_path: None,
             window_handle: None,
+            video_player: Arc::new(Mutex::new(video_player::VideoPlayer::new())),
         }
     }
 
@@ -157,9 +205,37 @@ fn open_file(_: &OpenFile, cx: &mut App) {
                 match extension {
                     Some("mp4") | Some("mov") | Some("MP4") | Some("MOV") => {
                         let path_string = path.to_string_lossy().to_string();
+                        let path_clone = path_string.clone();
+
                         cx.update(|cx| {
                             let app_state = cx.global_mut::<AppState>();
                             app_state.file_path = Some(path_string);
+
+                            // Load and play the video
+                            let video_player = app_state.video_player.clone();
+                            if let Ok(mut player) = video_player.lock() {
+                                println!("Loading video file: {}", path_clone);
+
+                                // Load the file into the pipeline
+                                match player.load_file(&path_clone) {
+                                    Ok(()) => {
+                                        println!("Video file loaded successfully");
+
+                                        // Start playback
+                                        match player.play() {
+                                            Ok(()) => {
+                                                println!("Video playback started");
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Failed to start playback: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to load video file: {}", e);
+                                    }
+                                }
+                            }
                         })
                         .ok();
                     }
