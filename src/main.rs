@@ -1,30 +1,6 @@
 //! ASVE - Video Editor with GPUI
 //!
-//! ## Native Window Handle Access
-//!
-//! This application stores a `AnyWindowHandle` in the global `AppState`, which can be used
-//! to access the underlying native window handle for integration with native APIs.
-//!
-//! ### Usage Example:
-//!
-//! To access the raw window handle (for APIs like wgpu, FFmpeg hardware acceleration, etc.):
-//!
-//! ```rust
-//! // From within an action or async task with access to App context:
-//! cx.update(|cx| {
-//!     let app_state = cx.global::<AppState>();
-//!     if let Some(window_handle) = app_state.window_handle() {
-//!         cx.update_window(window_handle, |_window, _cx| {
-//!             // The window's underlying PlatformWindow implements HasWindowHandle
-//!             // from the raw-window-handle crate, allowing you to pass it to
-//!             // native APIs that need platform-specific window handles
-//!         }).ok();
-//!     }
-//! }).ok();
-//! ```
-//!
-//! The `raw-window-handle` crate is included as a dependency, which provides
-//! cross-platform window handle abstraction used by graphics APIs like wgpu.
+//! A simple video player application built with GPUI and GStreamer.
 
 mod video_player;
 
@@ -32,11 +8,13 @@ use gpui::{
     AnyWindowHandle, App, Application, Context, Global, Menu, MenuItem, PathPromptOptions,
     SystemMenuType, Window, WindowOptions, actions, div, prelude::*, rgb,
 };
+use raw_window_handle::HasDisplayHandle;
+
 use std::sync::{Arc, Mutex};
 
-struct SetMenus;
+struct ASVE;
 
-impl Render for SetMenus {
+impl Render for ASVE {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let app_state = cx.global::<AppState>();
         let content = if let Some(ref path) = app_state.file_path {
@@ -78,53 +56,63 @@ fn main() {
         // Add menu items
         set_app_menus(cx);
         let window = cx
-            .open_window(WindowOptions::default(), |_window, cx| {
-                cx.new(|_| SetMenus {})
+            .open_window(WindowOptions::default(), |window, cx| {
+                // Store the window handle in AppState for later use
+                let window_handle = window.window_handle();
+                cx.update_global::<AppState, _>(|state, _| {
+                    state.window_handle = Some(window_handle);
+                });
+                return cx.new(|_| ASVE {});
             })
             .unwrap();
-
-        // Store the window handle in AppState for later use
-        // This AnyWindowHandle can be used to access the window from anywhere in the app
-        cx.update_global::<AppState, _>(|state, _| {
-            state.window_handle = Some(window.into());
-        });
 
         // Log information about the window handle (for demonstration)
         println!("Window created with handle: {:?}", window);
 
         // Extract and set the NSView handle for the video player
         // Note: This requires accessing GPUI internals
-        extract_and_set_window_handle(cx);
+        extract_and_set_display_handle(cx);
     });
 }
 
-/// Extract the native NSView handle from GPUI and set it on the video player
+/// Extract the native display handle from GPUI and set it on the video player
 ///
-/// IMPORTANT: This function uses GPUI internals to access the native window handle.
-/// GPUI's current API doesn't expose the raw window handle in a straightforward way,
-/// so this is a workaround that may need to be updated if GPUI's internals change.
-fn extract_and_set_window_handle(cx: &mut App) {
+/// This function uses the stored AnyWindowHandle to access the window's display_handle()
+/// method, which provides raw window handle access via the raw-window-handle crate.
+fn extract_and_set_display_handle(cx: &mut App) {
     let app_state = cx.global::<AppState>();
-    let _video_player = app_state.video_player.clone();
 
-    if let Some(_window_handle) = app_state.window_handle() {
-        // TODO: Extract the raw NSView handle from GPUI's AnyWindowHandle
-        //
-        // CHALLENGE: GPUI's current API doesn't expose the raw window handle directly.
-        // GPUI's Window type doesn't implement HasWindowHandle, and the PlatformWindow
-        // (which does) is not publicly accessible.
-        //
-        // WORKAROUND OPTIONS:
-        // 1. Wait for GPUI to expose raw window handles more easily
-        // 2. Fork GPUI and add a public method to get the raw handle
-        // 3. Use platform-specific code to get the handle from NSApplication
-        //
-        // For now, the window handle must be set manually or via GPUI API enhancement.
-        // The video player will work once the window handle is properly set.
+    if let Some(window_handle) = app_state.window_handle() {
+        let _video_player = app_state.video_player.clone();
 
-        println!("Window handle available but extraction not yet implemented");
-        println!("Video overlay may not work until window handle is properly set");
-        println!("TODO: Implement window handle extraction from GPUI");
+        // Access the window through the handle to get the display handle
+        window_handle
+            .update(cx, |_view, window, _app| {
+                // Get the raw display handle from the window
+                match window.display_handle() {
+                    Ok(display_handle) => {
+                        // TODO: Extract the native handle pointer from DisplayHandle
+                        // The DisplayHandle contains platform-specific handles that need to be
+                        // extracted differently on each platform (NSView on macOS, HWND on Windows, etc.)
+                        println!("Display handle obtained successfully: {:?}", display_handle);
+                        println!(
+                            "TODO: Extract platform-specific native handle and pass to video player"
+                        );
+
+                        // For now, just noting that we have access to the display handle
+                        // In a real implementation, you would:
+                        // 1. Match on the platform-specific handle type
+                        // 2. Extract the raw pointer (e.g., NSView* on macOS)
+                        // 3. Convert to usize and pass to video_player.set_window_handle()
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to get display handle: {:?}", e);
+                    }
+                }
+            })
+            .ok();
+    } else {
+        eprintln!("No window handle stored in AppState");
     }
 }
 
@@ -143,22 +131,7 @@ impl AppState {
         }
     }
 
-    /// Get the stored window handle for use with GPUI APIs
-    ///
-    /// This can be used with cx.update_window() to access window-specific functionality.
-    /// To get raw platform handles (for passing to native APIs like wgpu, ffmpeg, etc.),
-    /// you need to access the window through GPUI's context system.
-    ///
-    /// Example usage:
-    /// ```
-    /// if let Some(handle) = app_state.window_handle() {
-    ///     cx.update_window(handle, |_window, cx| {
-    ///         // Access window here
-    ///         // The underlying PlatformWindow implements HasWindowHandle trait
-    ///         // which can provide raw window handles for native APIs
-    ///     }).ok();
-    /// }
-    /// ```
+    /// Get the stored window handle
     pub fn window_handle(&self) -> Option<AnyWindowHandle> {
         self.window_handle
     }
