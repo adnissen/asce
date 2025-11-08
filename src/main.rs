@@ -8,7 +8,7 @@ use gpui::{
     AnyWindowHandle, App, Application, Context, Global, Menu, MenuItem, PathPromptOptions,
     SystemMenuType, Window, WindowOptions, actions, div, prelude::*, rgb,
 };
-use raw_window_handle::HasDisplayHandle;
+use raw_window_handle::RawWindowHandle;
 
 use std::sync::{Arc, Mutex};
 
@@ -57,10 +57,10 @@ fn main() {
         set_app_menus(cx);
         let window = cx
             .open_window(WindowOptions::default(), |window, cx| {
-                // Store the window handle in AppState for later use
-                let window_handle = window.window_handle();
+                // Store the GPUI window handle in AppState for later use
+                let gpui_window_handle = window.window_handle();
                 cx.update_global::<AppState, _>(|state, _| {
-                    state.window_handle = Some(window_handle);
+                    state.window_handle = Some(gpui_window_handle);
                 });
                 return cx.new(|_| ASVE {});
             })
@@ -75,38 +75,53 @@ fn main() {
     });
 }
 
-/// Extract the native display handle from GPUI and set it on the video player
+/// Extract the native NSView handle from GPUI and set it on the video player
 ///
-/// This function uses the stored AnyWindowHandle to access the window's display_handle()
+/// This function uses the stored AnyWindowHandle to access the window's window_handle()
 /// method, which provides raw window handle access via the raw-window-handle crate.
+/// On macOS, this extracts the NSView pointer needed for GStreamer video rendering.
 fn extract_and_set_display_handle(cx: &mut App) {
     let app_state = cx.global::<AppState>();
 
     if let Some(window_handle) = app_state.window_handle() {
-        let _video_player = app_state.video_player.clone();
+        let video_player = app_state.video_player.clone();
 
-        // Access the window through the handle to get the display handle
+        // Access the window through the handle to get the window handle
         window_handle
             .update(cx, |_view, window, _app| {
-                // Get the raw display handle from the window
-                match window.display_handle() {
-                    Ok(display_handle) => {
-                        // TODO: Extract the native handle pointer from DisplayHandle
-                        // The DisplayHandle contains platform-specific handles that need to be
-                        // extracted differently on each platform (NSView on macOS, HWND on Windows, etc.)
-                        println!("Display handle obtained successfully: {:?}", display_handle);
-                        println!(
-                            "TODO: Extract platform-specific native handle and pass to video player"
-                        );
+                // Get the raw window handle from the window using the HasWindowHandle trait
+                use raw_window_handle::HasWindowHandle;
+                match window.window_handle() {
+                    Ok(window_handle) => {
+                        // Extract the platform-specific handle
+                        let raw_handle = window_handle.as_raw();
 
-                        // For now, just noting that we have access to the display handle
-                        // In a real implementation, you would:
-                        // 1. Match on the platform-specific handle type
-                        // 2. Extract the raw pointer (e.g., NSView* on macOS)
-                        // 3. Convert to usize and pass to video_player.set_window_handle()
+                        match raw_handle {
+                            RawWindowHandle::AppKit(appkit_handle) => {
+                                // Extract the NSView pointer from the AppKit handle
+                                // The ns_view field is a NonNull<c_void> which is safe to access
+                                let ns_view_ptr = appkit_handle.ns_view.as_ptr() as usize;
+
+                                println!("NSView pointer extracted: 0x{:x}", ns_view_ptr);
+
+                                // Pass the NSView pointer to the video player
+                                if let Ok(mut player) = video_player.lock() {
+                                    player.set_window_handle(ns_view_ptr);
+                                    println!("NSView pointer set on video player");
+                                } else {
+                                    eprintln!("Failed to lock video player mutex");
+                                }
+                            }
+                            _ => {
+                                eprintln!(
+                                    "Unsupported platform window handle type: {:?}",
+                                    raw_handle
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
-                        eprintln!("Failed to get display handle: {:?}", e);
+                        eprintln!("Failed to get window handle: {:?}", e);
                     }
                 }
             })
