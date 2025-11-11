@@ -90,6 +90,9 @@ struct ControlsWindow {
     slider_state: Entity<SliderState>,
     current_position: f32,
     duration: f32,
+    is_playing: bool,
+    clip_start: Option<f32>,
+    clip_end: Option<f32>,
 }
 
 impl ControlsWindow {
@@ -126,6 +129,9 @@ impl ControlsWindow {
             slider_state,
             current_position: 0.0,
             duration: 0.0,
+            is_playing: false,
+            clip_start: None,
+            clip_end: None,
         }
     }
 
@@ -138,6 +144,7 @@ impl ControlsWindow {
                 self.current_position = position.seconds() as f32;
                 self.duration = duration.seconds() as f32;
             }
+            self.is_playing = player.is_playing();
         }
     }
 
@@ -215,31 +222,122 @@ impl Render for ControlsWindow {
                 div()
                     .flex()
                     .items_center()
-                    .justify_center()
+                    .justify_between()
                     .gap_4()
+                    .w_full()
+                    // Left side: Clip start/end buttons
                     .child(
                         div()
-                            .px_6()
-                            .py_3()
-                            .bg(rgb(0x388e3c))
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_color(rgb(0xffffff))
-                            .hover(|style| style.bg(rgb(0x4caf50)))
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(|_, _, _, cx| {
-                                    let app_state = cx.global::<AppState>();
-                                    let video_player = app_state.video_player.clone();
-                                    if let Ok(player) = video_player.lock() {
-                                        if let Err(e) = player.play() {
-                                            eprintln!("Failed to play: {}", e);
-                                        }
-                                    }
-                                }),
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            // Buttons row
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    // Clip start button with time display
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(div().text_xs().text_color(rgb(0xffffff)).child(
+                                                if let Some(start) = self.clip_start {
+                                                    format!("Start: {}", Self::format_time(start))
+                                                } else {
+                                                    "Start: --:--".to_string()
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .px_4()
+                                                    .py_2()
+                                                    .bg(rgb(0x1976d2))
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .text_sm()
+                                                    .text_color(rgb(0xffffff))
+                                                    .hover(|style| style.bg(rgb(0x2196f3)))
+                                                    .on_mouse_down(
+                                                        gpui::MouseButton::Left,
+                                                        cx.listener(|this, _, _, cx| {
+                                                            let current_time =
+                                                                this.current_position;
+
+                                                            // Check if this would violate the constraint
+                                                            if let Some(end) = this.clip_end {
+                                                                if current_time >= end {
+                                                                    // Unset clip_end if start would be after it
+                                                                    this.clip_end = None;
+                                                                }
+                                                            }
+
+                                                            this.clip_start = Some(current_time);
+                                                            cx.notify();
+                                                        }),
+                                                    )
+                                                    .child("Set Clip Start"),
+                                            ),
+                                    )
+                                    // Clip end button with time display
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(div().text_xs().text_color(rgb(0xffffff)).child(
+                                                if let Some(end) = self.clip_end {
+                                                    format!("End: {}", Self::format_time(end))
+                                                } else {
+                                                    "End: --:--".to_string()
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .px_4()
+                                                    .py_2()
+                                                    .bg(rgb(0xc62828))
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .text_sm()
+                                                    .text_color(rgb(0xffffff))
+                                                    .hover(|style| style.bg(rgb(0xe53935)))
+                                                    .on_mouse_down(
+                                                        gpui::MouseButton::Left,
+                                                        cx.listener(|this, _, _, cx| {
+                                                            let current_time =
+                                                                this.current_position;
+
+                                                            // Check if this would violate the constraint
+                                                            if let Some(start) = this.clip_start {
+                                                                if current_time <= start {
+                                                                    // Unset clip_start if end would be before it
+                                                                    this.clip_start = None;
+                                                                }
+                                                            }
+
+                                                            this.clip_end = Some(current_time);
+                                                            cx.notify();
+                                                        }),
+                                                    )
+                                                    .child("Set Clip End"),
+                                            ),
+                                    ),
                             )
-                            .child("Play"),
+                            // Display total clip length if both times are set
+                            .when_some(
+                                self.clip_start
+                                    .and_then(|start| self.clip_end.map(|end| end - start)),
+                                |this, duration| {
+                                    this.child(div().text_xs().text_color(rgb(0xffffff)).child(
+                                        format!("Duration: {}", Self::format_time(duration)),
+                                    ))
+                                },
+                            ),
                     )
+                    // Center: Play/pause button
                     .child(
                         div()
                             .px_6()
@@ -251,41 +349,26 @@ impl Render for ControlsWindow {
                             .hover(|style| style.bg(rgb(0x4caf50)))
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
-                                cx.listener(|_, _, _, cx| {
+                                cx.listener(|this, _, _, cx| {
                                     let app_state = cx.global::<AppState>();
                                     let video_player = app_state.video_player.clone();
                                     if let Ok(player) = video_player.lock() {
-                                        if let Err(e) = player.pause() {
-                                            eprintln!("Failed to pause: {}", e);
+                                        if this.is_playing {
+                                            if let Err(e) = player.pause() {
+                                                eprintln!("Failed to pause: {}", e);
+                                            }
+                                        } else {
+                                            if let Err(e) = player.play() {
+                                                eprintln!("Failed to play: {}", e);
+                                            }
                                         }
                                     }
                                 }),
                             )
-                            .child("Pause"),
+                            .child(if self.is_playing { "Pause" } else { "Play" }),
                     )
-                    .child(
-                        div()
-                            .px_6()
-                            .py_3()
-                            .bg(rgb(0x388e3c))
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_color(rgb(0xffffff))
-                            .hover(|style| style.bg(rgb(0x4caf50)))
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(|_, _, _, cx| {
-                                    let app_state = cx.global::<AppState>();
-                                    let video_player = app_state.video_player.clone();
-                                    if let Ok(player) = video_player.lock() {
-                                        if let Err(e) = player.stop() {
-                                            eprintln!("Failed to stop: {}", e);
-                                        }
-                                    }
-                                }),
-                            )
-                            .child("Stop"),
-                    ),
+                    // Right side: Empty for now (to balance the layout)
+                    .child(div().w(px(150.0))),
             )
     }
 }
@@ -535,11 +618,21 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
 
     println!("Video window created");
 
+    // Get the video window's bounds to position controls below it
+    let video_bounds = video_window
+        .update(cx, |_, window, _| window.bounds())
+        .unwrap();
+
+    // Calculate position for controls window (directly below video window)
+    let controls_x = video_bounds.origin.x;
+    let controls_y = video_bounds.origin.y + video_bounds.size.height;
+    let controls_width = video_bounds.size.width; // Match video window width
+
     // Create the controls window (not closable, no title)
     let controls_window_options = WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds {
-            origin: gpui::point(px(100.0), px(100.0)),
-            size: gpui::size(px(500.0), px(120.0)),
+            origin: gpui::point(controls_x, controls_y),
+            size: gpui::size(controls_width, px(180.0)),
         })),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         focus: false,

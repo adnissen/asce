@@ -145,9 +145,6 @@ impl VideoPlayer {
             // Clone the pipeline for use in the closure
             let pipeline_weak = pipeline.downgrade();
 
-            // Capture the render_rect for use in AsyncDone handler
-            let render_rect = self.render_rect;
-
             let guard = bus
                 .add_watch(move |_bus, msg| {
                     use gst::MessageView;
@@ -265,6 +262,15 @@ impl VideoPlayer {
         } else {
             None
         }
+    }
+
+    /// Check if the video is currently playing
+    pub fn is_playing(&self) -> bool {
+        if let Some(ref pipeline) = self.pipeline {
+            let (_, state, _) = pipeline.state(gst::ClockTime::from_mseconds(0));
+            return state == gst::State::Playing;
+        }
+        false
     }
 
     /// Seek to a specific position
