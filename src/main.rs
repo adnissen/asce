@@ -196,6 +196,12 @@ impl Render for ControlsWindow {
             .size_full()
             .p_4()
             .gap_3()
+            .on_mouse_move(window.listener_for(
+                &self.slider_state,
+                |state, _e: &gpui::MouseMoveEvent, window, cx| {
+                    state.clear_hover(window, cx);
+                },
+            ))
             // Slider and time display section
             .child(
                 div()

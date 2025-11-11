@@ -3,9 +3,9 @@
 use std::ops::Range;
 
 use gpui::{
-    canvas, div, prelude::*, px, rgb, Along, App, Axis, Bounds, Context, DragMoveEvent, Empty,
-    Entity, EntityId, EventEmitter, IntoElement, MouseButton, MouseDownEvent, Pixels, Point,
-    Render, RenderOnce, StyleRefinement, Styled, Window,
+    Along, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, EntityId, EventEmitter,
+    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Render, RenderOnce,
+    StyleRefinement, Styled, Window, canvas, div, prelude::*, px, rgb,
 };
 
 #[derive(Clone)]
@@ -75,6 +75,7 @@ pub struct SliderState {
     value: SliderValue,
     percentage: Range<f32>,
     bounds: Bounds<Pixels>,
+    hover_position: Option<f32>, // Percentage position of hover (0.0 to 1.0)
 }
 
 impl SliderState {
@@ -86,6 +87,7 @@ impl SliderState {
             value: SliderValue::default(),
             percentage: (0.0..0.0),
             bounds: Bounds::default(),
+            hover_position: None,
         }
     }
 
@@ -185,6 +187,38 @@ impl SliderState {
         cx.emit(SliderEvent::Change(self.value));
         cx.notify();
     }
+
+    fn update_hover_position(
+        &mut self,
+        axis: Axis,
+        position: Point<Pixels>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.bounds;
+
+        let inner_pos = if matches!(axis, Axis::Horizontal) {
+            position.x - bounds.left()
+        } else {
+            bounds.bottom() - position.y
+        };
+        let total_size = bounds.size.along(axis);
+        let percentage = (inner_pos.clamp(px(0.), total_size) / total_size).clamp(0.0, 1.0);
+        if Some(percentage) != self.hover_position {
+            self.hover_position = Some(percentage);
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
+    pub fn clear_hover(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.hover_position = None;
+        cx.notify();
+    }
+
+    pub fn get_hover_value(&self) -> Option<f32> {
+        self.hover_position.map(|p| self.percentage_to_value(p))
+    }
 }
 
 impl EventEmitter<SliderEvent> for SliderState {}
@@ -223,6 +257,19 @@ impl Styled for Slider {
     }
 }
 
+fn format_time(seconds: f32) -> String {
+    let total_seconds = seconds as i32;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let secs = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{}:{:02}:{:02}", hours, minutes, secs)
+    } else {
+        format!("{}:{:02}", minutes, secs)
+    }
+}
+
 impl RenderOnce for Slider {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let axis = self.axis;
@@ -230,6 +277,9 @@ impl RenderOnce for Slider {
         let state = self.state.read(cx);
         let bar_size = state.bounds.size.along(axis);
         let bar_end = state.percentage.end * bar_size;
+        let hover_info = state
+            .hover_position
+            .map(|p| (p, state.percentage_to_value(p)));
 
         let bar_color = rgb(0x4caf50);
         let thumb_color = rgb(0xffffff);
@@ -253,6 +303,13 @@ impl RenderOnce for Slider {
                             },
                         ),
                     )
+                    .on_mouse_move(window.listener_for(
+                        &self.state,
+                        move |state, e: &MouseMoveEvent, window, cx| {
+                            state.update_hover_position(axis, e.position, window, cx);
+                            cx.stop_propagation();
+                        },
+                    ))
                     .on_drag(DragSlider(entity_id), |drag, _, _, cx| {
                         cx.stop_propagation();
                         cx.new(|_| drag.clone())
@@ -348,6 +405,30 @@ impl RenderOnce for Slider {
                                 )
                                 .absolute()
                                 .size_full()
+                            })
+                            .when_some(hover_info, |el, (percentage, value)| {
+                                let hover_pos = percentage * bar_size;
+                                let time_text = format_time(value);
+
+                                el.child(
+                                    div()
+                                        .id("slider-tooltip")
+                                        .absolute()
+                                        .bottom(px(20.))
+                                        .left(hover_pos)
+                                        .ml(-px(25.))
+                                        .px_2()
+                                        .py_1()
+                                        .bg(rgb(0x1a1a1a))
+                                        .border_1()
+                                        .border_color(rgb(0x444444))
+                                        .rounded(px(4.))
+                                        .shadow_lg()
+                                        .text_xs()
+                                        .text_color(rgb(0xffffff))
+                                        .whitespace_nowrap()
+                                        .child(time_text),
+                                )
                             }),
                     ),
             )
