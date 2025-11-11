@@ -2,15 +2,18 @@
 //!
 //! A simple video player application built with GPUI and GStreamer.
 
+mod slider;
 mod video_player;
 
 use gpui::{
-    AnyWindowHandle, App, Application, Context, Global, Menu, MenuItem, PathPromptOptions,
-    SystemMenuType, Window, WindowOptions, actions, div, prelude::*, px, rgb,
+    AnyWindowHandle, App, Application, Context, Entity, Global, Menu, MenuItem, PathPromptOptions,
+    SystemMenuType, Timer, Window, WindowOptions, actions, div, prelude::*, px, rgb,
 };
 use raw_window_handle::RawWindowHandle;
+use slider::{Slider, SliderEvent, SliderState, SliderValue};
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Initial window that shows just an "Open File" button
 struct InitialWindow;
@@ -86,86 +89,209 @@ impl Render for VideoPlayerWindow {
     }
 }
 
-/// Controls window with play/pause/stop buttons
-struct ControlsWindow;
+/// Controls window with play/pause/stop buttons and video scrubber
+struct ControlsWindow {
+    slider_state: Entity<SliderState>,
+    current_position: f32,
+    duration: f32,
+}
+
+impl ControlsWindow {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let slider_state = cx.new(|_cx| {
+            SliderState::new()
+                .min(0.0)
+                .max(36000.0) // Max 10 hours
+                .step(0.1)
+                .default_value(0.0)
+        });
+
+        // Subscribe to slider events
+        cx.subscribe(&slider_state, |_this, _, event: &SliderEvent, cx| {
+            let SliderEvent::Change(value) = event;
+            let position_secs = value.end();
+
+            // Seek the video
+            let app_state = cx.global::<AppState>();
+            let video_player = app_state.video_player.clone();
+
+            if let Ok(player) = video_player.lock() {
+                use gstreamer::ClockTime;
+                let nanos = (position_secs * 1_000_000_000.0) as u64;
+                let clock_time = ClockTime::from_nseconds(nanos);
+                if let Err(e) = player.seek(clock_time) {
+                    eprintln!("Failed to seek: {}", e);
+                }
+            }
+        })
+        .detach();
+
+        Self {
+            slider_state,
+            current_position: 0.0,
+            duration: 0.0,
+        }
+    }
+
+    fn update_from_video(&mut self, cx: &mut Context<Self>) {
+        self.update_position_from_player(cx);
+        cx.notify();
+    }
+
+    fn update_position_from_player(&mut self, cx: &mut Context<Self>) {
+        let app_state = cx.global::<AppState>();
+        let video_player = app_state.video_player.clone();
+
+        if let Ok(player) = video_player.lock() {
+            if let Some((position, duration)) = player.get_position_duration() {
+                self.current_position = position.seconds() as f32;
+                self.duration = duration.seconds() as f32;
+            }
+        }
+    }
+
+    fn format_time(seconds: f32) -> String {
+        let total_secs = seconds as u64;
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        format!("{:02}:{:02}", mins, secs)
+    }
+}
 
 impl Render for ControlsWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Update slider state to match current video position and duration
+        if self.duration > 0.0 {
+            // Update max if duration is known
+            let current_max = self.slider_state.read(cx).get_max();
+            if (current_max - self.duration).abs() > 0.1 {
+                // Need to recreate the slider state with new max value
+                self.slider_state = cx.new(|_cx| {
+                    SliderState::new()
+                        .min(0.0)
+                        .max(self.duration)
+                        .step(0.1)
+                        .default_value(self.current_position)
+                });
+            } else {
+                // Just update the position
+                self.slider_state.update(cx, |state, cx| {
+                    state.set_value(
+                        SliderValue::Single(self.current_position),
+                        window,
+                        cx
+                    );
+                });
+            }
+        }
+
+        let current_time = self.current_position;
+        let duration = if self.duration > 0.0 { self.duration } else { 100.0 };
+
         div()
             .flex()
+            .flex_col()
             .bg(rgb(0x1b5e20))
             .size_full()
-            .items_center()
-            .justify_center()
-            .gap_4()
+            .p_4()
+            .gap_3()
+            // Slider and time display section
             .child(
                 div()
-                    .px_6()
-                    .py_3()
-                    .bg(rgb(0x388e3c))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_color(rgb(0xffffff))
-                    .hover(|style| style.bg(rgb(0x4caf50)))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|_, _, _, cx| {
-                            let app_state = cx.global::<AppState>();
-                            let video_player = app_state.video_player.clone();
-                            if let Ok(player) = video_player.lock() {
-                                if let Err(e) = player.play() {
-                                    eprintln!("Failed to play: {}", e);
-                                }
-                            }
-                        }),
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .w_full()
+                    // Time display
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .w_full()
+                            .text_sm()
+                            .text_color(rgb(0xffffff))
+                            .child(Self::format_time(current_time))
+                            .child(Self::format_time(duration)),
                     )
-                    .child("Play"),
+                    // Slider
+                    .child(Slider::new(&self.slider_state).horizontal()),
             )
+            // Button controls section
             .child(
                 div()
-                    .px_6()
-                    .py_3()
-                    .bg(rgb(0x388e3c))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_color(rgb(0xffffff))
-                    .hover(|style| style.bg(rgb(0x4caf50)))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|_, _, _, cx| {
-                            let app_state = cx.global::<AppState>();
-                            let video_player = app_state.video_player.clone();
-                            if let Ok(player) = video_player.lock() {
-                                if let Err(e) = player.pause() {
-                                    eprintln!("Failed to pause: {}", e);
-                                }
-                            }
-                        }),
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap_4()
+                    .child(
+                        div()
+                            .px_6()
+                            .py_3()
+                            .bg(rgb(0x388e3c))
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_color(rgb(0xffffff))
+                            .hover(|style| style.bg(rgb(0x4caf50)))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|_, _, _, cx| {
+                                    let app_state = cx.global::<AppState>();
+                                    let video_player = app_state.video_player.clone();
+                                    if let Ok(player) = video_player.lock() {
+                                        if let Err(e) = player.play() {
+                                            eprintln!("Failed to play: {}", e);
+                                        }
+                                    }
+                                }),
+                            )
+                            .child("Play"),
                     )
-                    .child("Pause"),
-            )
-            .child(
-                div()
-                    .px_6()
-                    .py_3()
-                    .bg(rgb(0x388e3c))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_color(rgb(0xffffff))
-                    .hover(|style| style.bg(rgb(0x4caf50)))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|_, _, _, cx| {
-                            let app_state = cx.global::<AppState>();
-                            let video_player = app_state.video_player.clone();
-                            if let Ok(player) = video_player.lock() {
-                                if let Err(e) = player.stop() {
-                                    eprintln!("Failed to stop: {}", e);
-                                }
-                            }
-                        }),
+                    .child(
+                        div()
+                            .px_6()
+                            .py_3()
+                            .bg(rgb(0x388e3c))
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_color(rgb(0xffffff))
+                            .hover(|style| style.bg(rgb(0x4caf50)))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|_, _, _, cx| {
+                                    let app_state = cx.global::<AppState>();
+                                    let video_player = app_state.video_player.clone();
+                                    if let Ok(player) = video_player.lock() {
+                                        if let Err(e) = player.pause() {
+                                            eprintln!("Failed to pause: {}", e);
+                                        }
+                                    }
+                                }),
+                            )
+                            .child("Pause"),
                     )
-                    .child("Stop"),
+                    .child(
+                        div()
+                            .px_6()
+                            .py_3()
+                            .bg(rgb(0x388e3c))
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_color(rgb(0xffffff))
+                            .hover(|style| style.bg(rgb(0x4caf50)))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|_, _, _, cx| {
+                                    let app_state = cx.global::<AppState>();
+                                    let video_player = app_state.video_player.clone();
+                                    if let Ok(player) = video_player.lock() {
+                                        if let Err(e) = player.stop() {
+                                            eprintln!("Failed to stop: {}", e);
+                                        }
+                                    }
+                                }),
+                            )
+                            .child("Stop"),
+                    ),
             )
     }
 }
@@ -413,7 +539,7 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
     let controls_window_options = WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds {
             origin: gpui::point(px(100.0), px(100.0)),
-            size: gpui::size(px(400.0), px(80.0)),
+            size: gpui::size(px(500.0), px(120.0)),
         })),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         focus: false,
@@ -428,7 +554,7 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
 
     let controls_window = cx
         .open_window(controls_window_options, |_window, cx| {
-            cx.new(|_| ControlsWindow {})
+            cx.new(|cx| ControlsWindow::new(cx))
         })
         .unwrap();
 
