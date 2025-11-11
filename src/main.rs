@@ -2,6 +2,7 @@
 //!
 //! A simple video player application built with GPUI and GStreamer.
 
+mod ffmpeg_export;
 mod slider;
 mod video_player;
 
@@ -42,7 +43,7 @@ impl Render for InitialWindow {
                             files: true,
                             directories: false,
                             multiple: false,
-                            prompt: Some("Select an MP4 or MOV file".into()),
+                            prompt: Some("Select a video file".into()),
                         });
 
                         cx.spawn(async move |cx| {
@@ -50,8 +51,11 @@ impl Render for InitialWindow {
                                 if let Some(path) = paths.first() {
                                     // Check if the file has a valid extension
                                     let extension = path.extension().and_then(|e| e.to_str());
-                                    match extension {
-                                        Some("mp4") | Some("mov") | Some("MP4") | Some("MOV") => {
+                                    let supported_extensions = ffmpeg_export::get_video_extensions();
+
+                                    if let Some(ext) = extension {
+                                        let ext_lower = ext.to_lowercase();
+                                        if supported_extensions.contains(&ext_lower.as_str()) {
                                             let path_string = path.to_string_lossy().to_string();
                                             let path_clone = path_string.clone();
 
@@ -59,10 +63,10 @@ impl Render for InitialWindow {
                                                 create_video_windows(cx, path_string, path_clone);
                                             })
                                             .ok();
-                                        }
-                                        _ => {
+                                        } else {
                                             // Invalid file type
-                                            eprintln!("Invalid file type. Please select an .mp4 or .mov file.");
+                                            eprintln!("Invalid file type. Supported formats: {}",
+                                                supported_extensions.join(", "));
                                         }
                                     }
                                 }
@@ -93,6 +97,7 @@ struct ControlsWindow {
     is_playing: bool,
     clip_start: Option<f32>,
     clip_end: Option<f32>,
+    is_exporting: bool,
 }
 
 impl ControlsWindow {
@@ -132,6 +137,7 @@ impl ControlsWindow {
             is_playing: false,
             clip_start: None,
             clip_end: None,
+            is_exporting: false,
         }
     }
 
@@ -153,6 +159,96 @@ impl ControlsWindow {
         let mins = total_secs / 60;
         let secs = total_secs % 60;
         format!("{:02}:{:02}", mins, secs)
+    }
+
+    fn handle_export_click(&mut self, cx: &mut Context<Self>) {
+        // Get clip times
+        let clip_start = match self.clip_start {
+            Some(start) => start,
+            None => {
+                eprintln!("Export error: clip start not set");
+                return;
+            }
+        };
+
+        let clip_end = match self.clip_end {
+            Some(end) => end,
+            None => {
+                eprintln!("Export error: clip end not set");
+                return;
+            }
+        };
+
+        // Get the input file path from AppState
+        let app_state = cx.global::<AppState>();
+        let input_path = match &app_state.file_path {
+            Some(path) => path.clone(),
+            None => {
+                eprintln!("Export error: no input file loaded");
+                return;
+            }
+        };
+
+        // Generate default output filename and directory
+        let input_path_buf = std::path::PathBuf::from(&input_path);
+        let directory = input_path_buf
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+
+        let default_filename = input_path_buf
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("video")
+            .to_string()
+            + "_clip.mp4";
+
+        // Prompt for save location
+        let path_receiver = cx.prompt_for_new_path(directory, Some(&default_filename));
+
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(output_path))) = path_receiver.await {
+                let output_path_str = output_path.to_string_lossy().to_string();
+
+                // Set exporting state
+                this.update(cx, |this, cx| {
+                    this.is_exporting = true;
+                    cx.notify();
+                })
+                .ok();
+
+                // Run export on background thread
+                let input_path_clone = input_path.clone();
+                let output_path_str_clone = output_path_str.clone();
+                let export_result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        ffmpeg_export::export_clip(
+                            &input_path_clone,
+                            &output_path_str_clone,
+                            clip_start,
+                            clip_end,
+                        )
+                    })
+                    .await;
+
+                // Handle result and reset exporting state
+                match export_result {
+                    Ok(()) => {
+                        println!("Export completed successfully: {}", output_path_str);
+                    }
+                    Err(e) => {
+                        eprintln!("Export failed: {}", e);
+                    }
+                }
+
+                this.update(cx, |this, cx| {
+                    this.is_exporting = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 }
 
@@ -332,14 +428,51 @@ impl Render for ControlsWindow {
                                             ),
                                     ),
                             )
-                            // Display total clip length if both times are set
+                            // Display total clip length and export button if both times are set
                             .when_some(
                                 self.clip_start
                                     .and_then(|start| self.clip_end.map(|end| end - start)),
                                 |this, duration| {
-                                    this.child(div().text_xs().text_color(rgb(0xffffff)).child(
-                                        format!("Duration: {}", Self::format_time(duration)),
-                                    ))
+                                    this.child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0xffffff))
+                                                    .child(format!("Duration: {}", Self::format_time(duration))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .px_3()
+                                                    .py_1()
+                                                    .bg(rgb(0xf57c00))
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .text_xs()
+                                                    .text_color(rgb(0xffffff))
+                                                    .hover(|style| style.bg(rgb(0xfb8c00)))
+                                                    .when(self.is_exporting, |this| {
+                                                        this.bg(rgb(0x9e9e9e)).cursor_not_allowed()
+                                                    })
+                                                    .on_mouse_down(
+                                                        gpui::MouseButton::Left,
+                                                        cx.listener(|this, _, _, cx| {
+                                                            if !this.is_exporting {
+                                                                this.handle_export_click(cx);
+                                                            }
+                                                        }),
+                                                    )
+                                                    .child(if self.is_exporting {
+                                                        "Exporting..."
+                                                    } else {
+                                                        "Export"
+                                                    }),
+                                            ),
+                                    )
                                 },
                             ),
                     )
@@ -716,7 +849,7 @@ fn open_file(_: &OpenFile, cx: &mut App) {
         files: true,
         directories: false,
         multiple: false,
-        prompt: Some("Select an MP4 or MOV file".into()),
+        prompt: Some("Select a video file".into()),
     });
 
     cx.spawn(async move |cx| {
@@ -724,8 +857,11 @@ fn open_file(_: &OpenFile, cx: &mut App) {
             if let Some(path) = paths.first() {
                 // Check if the file has a valid extension
                 let extension = path.extension().and_then(|e| e.to_str());
-                match extension {
-                    Some("mp4") | Some("mov") | Some("MP4") | Some("MOV") => {
+                let supported_extensions = ffmpeg_export::get_video_extensions();
+
+                if let Some(ext) = extension {
+                    let ext_lower = ext.to_lowercase();
+                    if supported_extensions.contains(&ext_lower.as_str()) {
                         let path_string = path.to_string_lossy().to_string();
                         let path_clone = path_string.clone();
 
@@ -733,10 +869,10 @@ fn open_file(_: &OpenFile, cx: &mut App) {
                             create_video_windows(cx, path_string, path_clone);
                         })
                         .ok();
-                    }
-                    _ => {
-                        // Invalid file type - could show an error dialog here
-                        eprintln!("Invalid file type. Please select an .mp4 or .mov file.");
+                    } else {
+                        // Invalid file type
+                        eprintln!("Invalid file type. Supported formats: {}",
+                            supported_extensions.join(", "));
                     }
                 }
             }
