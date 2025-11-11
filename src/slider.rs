@@ -101,6 +101,12 @@ impl SliderState {
         self
     }
 
+    pub fn set_max(&mut self, max: f32, _: &mut Window, cx: &mut Context<Self>) {
+        self.max = max;
+        self.update_thumb_pos();
+        cx.notify();
+    }
+
     pub fn step(mut self, step: f32) -> Self {
         self.step = step;
         self

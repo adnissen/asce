@@ -7,13 +7,12 @@ mod video_player;
 
 use gpui::{
     AnyWindowHandle, App, Application, Context, Entity, Global, Menu, MenuItem, PathPromptOptions,
-    SystemMenuType, Timer, Window, WindowOptions, actions, div, prelude::*, px, rgb,
+    SystemMenuType, Window, WindowOptions, actions, div, prelude::*, px, rgb,
 };
 use raw_window_handle::RawWindowHandle;
 use slider::{Slider, SliderEvent, SliderState, SliderValue};
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 /// Initial window that shows just an "Open File" button
 struct InitialWindow;
@@ -82,10 +81,7 @@ struct VideoPlayerWindow;
 impl Render for VideoPlayerWindow {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         // Full window for video display - GStreamer will render directly to this window
-        div()
-            .flex()
-            .bg(rgb(0x000000))
-            .size_full()
+        div().flex().bg(rgb(0x000000)).size_full()
     }
 }
 
@@ -101,7 +97,7 @@ impl ControlsWindow {
         let slider_state = cx.new(|_cx| {
             SliderState::new()
                 .min(0.0)
-                .max(36000.0) // Max 10 hours
+                .max(36000.0) // Max 10 hours (will be updated once duration is known)
                 .step(0.1)
                 .default_value(0.0)
         });
@@ -133,11 +129,6 @@ impl ControlsWindow {
         }
     }
 
-    fn update_from_video(&mut self, cx: &mut Context<Self>) {
-        self.update_position_from_player(cx);
-        cx.notify();
-    }
-
     fn update_position_from_player(&mut self, cx: &mut Context<Self>) {
         let app_state = cx.global::<AppState>();
         let video_player = app_state.video_player.clone();
@@ -160,33 +151,36 @@ impl ControlsWindow {
 
 impl Render for ControlsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        cx.on_next_frame(window, |t, _window, cx| {
+            // Update from video player and request next frame
+            t.update_position_from_player(cx);
+
+            // Request another render on next frame to create continuous updates
+            cx.notify();
+        });
+
         // Update slider state to match current video position and duration
         if self.duration > 0.0 {
             // Update max if duration is known
             let current_max = self.slider_state.read(cx).get_max();
             if (current_max - self.duration).abs() > 0.1 {
-                // Need to recreate the slider state with new max value
-                self.slider_state = cx.new(|_cx| {
-                    SliderState::new()
-                        .min(0.0)
-                        .max(self.duration)
-                        .step(0.1)
-                        .default_value(self.current_position)
-                });
-            } else {
-                // Just update the position
+                // Update the slider's max value to match the video duration
                 self.slider_state.update(cx, |state, cx| {
-                    state.set_value(
-                        SliderValue::Single(self.current_position),
-                        window,
-                        cx
-                    );
+                    state.set_max(self.duration, window, cx);
                 });
             }
+            // Update the position
+            self.slider_state.update(cx, |state, cx| {
+                state.set_value(SliderValue::Single(self.current_position), window, cx);
+            });
         }
 
         let current_time = self.current_position;
-        let duration = if self.duration > 0.0 { self.duration } else { 100.0 };
+        let duration = if self.duration > 0.0 {
+            self.duration
+        } else {
+            100.0
+        };
 
         div()
             .flex()
@@ -480,19 +474,25 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
 
     // Close the windows by calling remove_window() on each
     if let Some(window) = initial_window {
-        window.update(cx, |_, window, _| {
-            window.remove_window();
-        }).ok();
+        window
+            .update(cx, |_, window, _| {
+                window.remove_window();
+            })
+            .ok();
     }
     if let Some(window) = video_window {
-        window.update(cx, |_, window, _| {
-            window.remove_window();
-        }).ok();
+        window
+            .update(cx, |_, window, _| {
+                window.remove_window();
+            })
+            .ok();
     }
     if let Some(window) = controls_window {
-        window.update(cx, |_, window, _| {
-            window.remove_window();
-        }).ok();
+        window
+            .update(cx, |_, window, _| {
+                window.remove_window();
+            })
+            .ok();
     }
 
     // Clear the handles from state
@@ -570,7 +570,7 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
     // Extract and set the display handle for the video window
     extract_and_set_display_handle(cx);
 
-    // Load the video file (but don't auto-play)
+    // Load the video file
     let app_state = cx.global::<AppState>();
     let video_player = app_state.video_player.clone();
     if let Ok(mut player) = video_player.lock() {
@@ -591,8 +591,18 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
                     }
                 }
 
-                // Do NOT auto-play - user must click Play button
-                println!("Video loaded and ready to play");
+                // Auto-play and immediately pause to get duration information
+                if let Err(e) = player.play() {
+                    eprintln!("Failed to auto-play: {}", e);
+                } else {
+                    println!("Auto-played video to get duration");
+                    // Immediately pause
+                    if let Err(e) = player.pause() {
+                        eprintln!("Failed to pause: {}", e);
+                    } else {
+                        println!("Video paused and ready");
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("Failed to load video file: {}", e);
