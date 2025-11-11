@@ -6,32 +6,167 @@ mod video_player;
 
 use gpui::{
     AnyWindowHandle, App, Application, Context, Global, Menu, MenuItem, PathPromptOptions,
-    SystemMenuType, Window, WindowOptions, actions, div, prelude::*, rgb,
+    SystemMenuType, Window, WindowOptions, actions, div, prelude::*, px, rgb,
 };
 use raw_window_handle::RawWindowHandle;
 
 use std::sync::{Arc, Mutex};
 
-struct ASVE;
+/// Initial window that shows just an "Open File" button
+struct InitialWindow;
 
-impl Render for ASVE {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let app_state = cx.global::<AppState>();
-        let content = if let Some(ref path) = app_state.file_path {
-            path.clone()
-        } else {
-            "No file path set. Please set a file path to continue.".to_string()
-        };
-
+impl Render for InitialWindow {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
+            .flex_col()
             .bg(rgb(0x2e7d32))
             .size_full()
             .justify_center()
             .items_center()
-            .text_xl()
-            .text_color(rgb(0xffffff))
-            .child(content)
+            .child(
+                div()
+                    .id("open-file-button")
+                    .px_8()
+                    .py_4()
+                    .bg(rgb(0x388e3c))
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .text_xl()
+                    .text_color(rgb(0xffffff))
+                    .hover(|style| style.bg(rgb(0x4caf50)))
+                    .on_click(|_, _window, cx| {
+                        let paths = cx.prompt_for_paths(PathPromptOptions {
+                            files: true,
+                            directories: false,
+                            multiple: false,
+                            prompt: Some("Select an MP4 or MOV file".into()),
+                        });
+
+                        cx.spawn(async move |cx| {
+                            if let Ok(Ok(Some(paths))) = paths.await {
+                                if let Some(path) = paths.first() {
+                                    // Check if the file has a valid extension
+                                    let extension = path.extension().and_then(|e| e.to_str());
+                                    match extension {
+                                        Some("mp4") | Some("mov") | Some("MP4") | Some("MOV") => {
+                                            let path_string = path.to_string_lossy().to_string();
+                                            let path_clone = path_string.clone();
+
+                                            cx.update(|cx| {
+                                                create_video_windows(cx, path_string, path_clone);
+                                            })
+                                            .ok();
+                                        }
+                                        _ => {
+                                            // Invalid file type
+                                            eprintln!("Invalid file type. Please select an .mp4 or .mov file.");
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                        .detach();
+                    })
+                    .child("Open File"),
+            )
+    }
+}
+
+/// Video player window that displays the video
+struct VideoPlayerWindow;
+
+impl Render for VideoPlayerWindow {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        // Full window for video display - GStreamer will render directly to this window
+        div()
+            .flex()
+            .bg(rgb(0x000000))
+            .size_full()
+    }
+}
+
+/// Controls window with play/pause/stop buttons
+struct ControlsWindow;
+
+impl Render for ControlsWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .bg(rgb(0x1b5e20))
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                div()
+                    .px_6()
+                    .py_3()
+                    .bg(rgb(0x388e3c))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(rgb(0xffffff))
+                    .hover(|style| style.bg(rgb(0x4caf50)))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|_, _, _, cx| {
+                            let app_state = cx.global::<AppState>();
+                            let video_player = app_state.video_player.clone();
+                            if let Ok(player) = video_player.lock() {
+                                if let Err(e) = player.play() {
+                                    eprintln!("Failed to play: {}", e);
+                                }
+                            }
+                        }),
+                    )
+                    .child("Play"),
+            )
+            .child(
+                div()
+                    .px_6()
+                    .py_3()
+                    .bg(rgb(0x388e3c))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(rgb(0xffffff))
+                    .hover(|style| style.bg(rgb(0x4caf50)))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|_, _, _, cx| {
+                            let app_state = cx.global::<AppState>();
+                            let video_player = app_state.video_player.clone();
+                            if let Ok(player) = video_player.lock() {
+                                if let Err(e) = player.pause() {
+                                    eprintln!("Failed to pause: {}", e);
+                                }
+                            }
+                        }),
+                    )
+                    .child("Pause"),
+            )
+            .child(
+                div()
+                    .px_6()
+                    .py_3()
+                    .bg(rgb(0x388e3c))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(rgb(0xffffff))
+                    .hover(|style| style.bg(rgb(0x4caf50)))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|_, _, _, cx| {
+                            let app_state = cx.global::<AppState>();
+                            let video_player = app_state.video_player.clone();
+                            if let Ok(player) = video_player.lock() {
+                                if let Err(e) = player.stop() {
+                                    eprintln!("Failed to stop: {}", e);
+                                }
+                            }
+                        }),
+                    )
+                    .child("Stop"),
+            )
     }
 }
 
@@ -55,23 +190,34 @@ fn main() {
         cx.on_action(open_file);
         // Add menu items
         set_app_menus(cx);
+
+        // Create a small initial window with just the "Open File" button
+        let initial_window_options = WindowOptions {
+            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
+                None,
+                gpui::size(px(300.0), px(200.0)),
+                cx,
+            ))),
+            titlebar: Some(gpui::TitlebarOptions {
+                title: Some("asve".into()),
+                appears_transparent: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
         let window = cx
-            .open_window(WindowOptions::default(), |window, cx| {
-                // Store the GPUI window handle in AppState for later use
-                let gpui_window_handle = window.window_handle();
-                cx.update_global::<AppState, _>(|state, _| {
-                    state.window_handle = Some(gpui_window_handle);
-                });
-                return cx.new(|_| ASVE {});
+            .open_window(initial_window_options, |_window, cx| {
+                cx.new(|_| InitialWindow {})
             })
             .unwrap();
 
-        // Log information about the window handle (for demonstration)
-        println!("Window created with handle: {:?}", window);
+        // Store the initial window handle
+        cx.update_global::<AppState, _>(|state, _| {
+            state.initial_window = Some(window.into());
+        });
 
-        // Extract and set the NSView handle for the video player
-        // Note: This requires accessing GPUI internals
-        extract_and_set_display_handle(cx);
+        println!("Initial window created");
     });
 }
 
@@ -83,7 +229,7 @@ fn main() {
 fn extract_and_set_display_handle(cx: &mut App) {
     let app_state = cx.global::<AppState>();
 
-    if let Some(window_handle) = app_state.window_handle() {
+    if let Some(window_handle) = app_state.video_window() {
         let video_player = app_state.video_player.clone();
 
         // Access the window through the handle to get the window handle
@@ -92,9 +238,9 @@ fn extract_and_set_display_handle(cx: &mut App) {
                 // Get the raw window handle from the window using the HasWindowHandle trait
                 use raw_window_handle::HasWindowHandle;
                 match window.window_handle() {
-                    Ok(window_handle) => {
+                    Ok(window_handle_obj) => {
                         // Extract the platform-specific handle
-                        let raw_handle = window_handle.as_raw();
+                        let raw_handle = window_handle_obj.as_raw();
 
                         match raw_handle {
                             RawWindowHandle::AppKit(appkit_handle) => {
@@ -104,10 +250,25 @@ fn extract_and_set_display_handle(cx: &mut App) {
 
                                 println!("NSView pointer extracted: 0x{:x}", ns_view_ptr);
 
-                                // Pass the NSView pointer to the video player
+                                // Get the window bounds to calculate render rectangle
+                                let bounds = window.bounds();
+                                // Pixels is a wrapper around f32, we need to extract the value
+                                // Using format! to convert to string then parse is a workaround
+                                let width_str = format!("{}", bounds.size.width);
+                                let height_str = format!("{}", bounds.size.height);
+                                let window_width: i32 =
+                                    width_str.trim_end_matches("px").parse().unwrap_or(800);
+                                let window_height: i32 =
+                                    height_str.trim_end_matches("px").parse().unwrap_or(600);
+
+                                println!("Window size: {}x{}", window_width, window_height);
+
+                                // Pass the NSView pointer and render rectangle to the video player
                                 if let Ok(mut player) = video_player.lock() {
                                     player.set_window_handle(ns_view_ptr);
-                                    println!("NSView pointer set on video player");
+                                    println!(
+                                        "NSView pointer and render rectangle set on video player"
+                                    );
                                 } else {
                                     eprintln!("Failed to lock video player mutex");
                                 }
@@ -127,13 +288,15 @@ fn extract_and_set_display_handle(cx: &mut App) {
             })
             .ok();
     } else {
-        eprintln!("No window handle stored in AppState");
+        eprintln!("No video window handle stored in AppState");
     }
 }
 
 struct AppState {
     file_path: Option<String>,
-    window_handle: Option<AnyWindowHandle>,
+    initial_window: Option<AnyWindowHandle>,
+    video_window: Option<AnyWindowHandle>,
+    controls_window: Option<AnyWindowHandle>,
     video_player: Arc<Mutex<video_player::VideoPlayer>>,
 }
 
@@ -141,14 +304,16 @@ impl AppState {
     fn new() -> Self {
         Self {
             file_path: None,
-            window_handle: None,
+            initial_window: None,
+            video_window: None,
+            controls_window: None,
             video_player: Arc::new(Mutex::new(video_player::VideoPlayer::new())),
         }
     }
 
-    /// Get the stored window handle
-    pub fn window_handle(&self) -> Option<AnyWindowHandle> {
-        self.window_handle
+    /// Get the video window handle
+    pub fn video_window(&self) -> Option<AnyWindowHandle> {
+        self.video_window
     }
 }
 
@@ -176,6 +341,140 @@ fn quit(_: &Quit, cx: &mut App) {
     cx.quit();
 }
 
+/// Create the video player and controls windows and load the video file
+fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
+    // Close existing windows by calling remove_window()
+    println!("Closing existing windows");
+
+    // Get handles before clearing state
+    let app_state = cx.global::<AppState>();
+    let initial_window = app_state.initial_window;
+    let video_window = app_state.video_window;
+    let controls_window = app_state.controls_window;
+
+    // Close the windows by calling remove_window() on each
+    if let Some(window) = initial_window {
+        window.update(cx, |_, window, _| {
+            window.remove_window();
+        }).ok();
+    }
+    if let Some(window) = video_window {
+        window.update(cx, |_, window, _| {
+            window.remove_window();
+        }).ok();
+    }
+    if let Some(window) = controls_window {
+        window.update(cx, |_, window, _| {
+            window.remove_window();
+        }).ok();
+    }
+
+    // Clear the handles from state
+    cx.update_global::<AppState, _>(|state, _| {
+        state.initial_window = None;
+        state.video_window = None;
+        state.controls_window = None;
+    });
+
+    // Extract just the file name from the path for the window title
+    let file_name = std::path::Path::new(&path_string)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Video Player")
+        .to_string();
+
+    // Create the video player window (closable)
+    let video_window_options = WindowOptions {
+        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
+            None,
+            gpui::size(px(1280.0), px(720.0)),
+            cx,
+        ))),
+        window_background: gpui::WindowBackgroundAppearance::Opaque,
+        focus: true,
+        is_movable: true,
+        titlebar: Some(gpui::TitlebarOptions {
+            title: Some(file_name.into()),
+            appears_transparent: false,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let video_window = cx
+        .open_window(video_window_options, |_window, cx| {
+            cx.new(|_| VideoPlayerWindow {})
+        })
+        .unwrap();
+
+    println!("Video window created");
+
+    // Create the controls window (not closable, no title)
+    let controls_window_options = WindowOptions {
+        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds {
+            origin: gpui::point(px(100.0), px(100.0)),
+            size: gpui::size(px(400.0), px(80.0)),
+        })),
+        window_background: gpui::WindowBackgroundAppearance::Opaque,
+        focus: false,
+        is_movable: true,
+        titlebar: Some(gpui::TitlebarOptions {
+            title: None,
+            appears_transparent: false,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let controls_window = cx
+        .open_window(controls_window_options, |_window, cx| {
+            cx.new(|_| ControlsWindow {})
+        })
+        .unwrap();
+
+    println!("Controls window created");
+
+    // Update AppState with new windows and file path
+    cx.update_global::<AppState, _>(|state, _| {
+        state.video_window = Some(video_window.into());
+        state.controls_window = Some(controls_window.into());
+        state.file_path = Some(path_string.clone());
+    });
+
+    // Extract and set the display handle for the video window
+    extract_and_set_display_handle(cx);
+
+    // Load the video file (but don't auto-play)
+    let app_state = cx.global::<AppState>();
+    let video_player = app_state.video_player.clone();
+    if let Ok(mut player) = video_player.lock() {
+        println!("Loading video file: {}", path_clone);
+
+        // Load the file into the pipeline
+        match player.load_file(&path_clone) {
+            Ok(()) => {
+                println!("Video file loaded successfully");
+
+                // Start the bus watch to handle messages via GLib main loop
+                match player.start_message_watch() {
+                    Ok(()) => {
+                        println!("Bus watch started successfully");
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to start bus watch: {}", e);
+                    }
+                }
+
+                // Do NOT auto-play - user must click Play button
+                println!("Video loaded and ready to play");
+            }
+            Err(e) => {
+                eprintln!("Failed to load video file: {}", e);
+            }
+        }
+    }
+}
+
 // Define the open file function that prompts for a file path
 fn open_file(_: &OpenFile, cx: &mut App) {
     let paths = cx.prompt_for_paths(PathPromptOptions {
@@ -196,34 +495,7 @@ fn open_file(_: &OpenFile, cx: &mut App) {
                         let path_clone = path_string.clone();
 
                         cx.update(|cx| {
-                            let app_state = cx.global_mut::<AppState>();
-                            app_state.file_path = Some(path_string);
-
-                            // Load and play the video
-                            let video_player = app_state.video_player.clone();
-                            if let Ok(mut player) = video_player.lock() {
-                                println!("Loading video file: {}", path_clone);
-
-                                // Load the file into the pipeline
-                                match player.load_file(&path_clone) {
-                                    Ok(()) => {
-                                        println!("Video file loaded successfully");
-
-                                        // Start playback
-                                        match player.play() {
-                                            Ok(()) => {
-                                                println!("Video playback started");
-                                            }
-                                            Err(e) => {
-                                                eprintln!("Failed to start playback: {}", e);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to load video file: {}", e);
-                                    }
-                                }
-                            }
+                            create_video_windows(cx, path_string, path_clone);
                         })
                         .ok();
                     }

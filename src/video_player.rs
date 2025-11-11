@@ -38,7 +38,8 @@ impl std::error::Error for VideoPlayerError {}
 pub struct VideoPlayer {
     pipeline: Option<gst::Element>,
     ns_view_handle: Option<usize>,
-    _bus_watch_guard: Option<gst::bus::BusWatchGuard>,
+    render_rect: Option<(i32, i32, i32, i32)>, // x, y, width, height
+    bus_watch_guard: Option<gst::bus::BusWatchGuard>,
 }
 
 impl VideoPlayer {
@@ -47,7 +48,8 @@ impl VideoPlayer {
         Self {
             pipeline: None,
             ns_view_handle: None,
-            _bus_watch_guard: None,
+            render_rect: Some((0, 0, 800, 600)),
+            bus_watch_guard: None,
         }
     }
 
@@ -88,12 +90,8 @@ impl VideoPlayer {
             println!("VideoPlayer: Warning - No window handle set, video may not display");
         }
 
-        // Set up bus message handler
-        let bus_watch_guard = self.setup_bus_handler(&pipeline)?;
-
-        // Store the pipeline and bus watch guard
+        // Store the pipeline
         self.pipeline = Some(pipeline);
-        self._bus_watch_guard = Some(bus_watch_guard);
 
         println!("VideoPlayer: File loaded successfully");
         Ok(())
@@ -104,7 +102,10 @@ impl VideoPlayer {
     /// This uses a sync bus handler to catch the prepare-window-handle message
     /// and set the window handle on the video sink.
     fn setup_video_overlay(&self, pipeline: &gst::Element, window_handle: usize) {
-        println!("VideoPlayer: Setting up VideoOverlay with handle 0x{:x}", window_handle);
+        println!(
+            "VideoPlayer: Setting up VideoOverlay with handle 0x{:x}",
+            window_handle
+        );
 
         let bus = pipeline.bus().expect("Pipeline should have a bus");
 
@@ -115,7 +116,10 @@ impl VideoPlayer {
 
                     if let Some(element) = msg.src() {
                         // Try to cast to VideoOverlay (clone first since dynamic_cast takes ownership)
-                        if let Ok(overlay) = element.clone().dynamic_cast::<gstreamer_video::VideoOverlay>() {
+                        if let Ok(overlay) = element
+                            .clone()
+                            .dynamic_cast::<gstreamer_video::VideoOverlay>()
+                        {
                             println!("VideoPlayer: Setting window handle on video overlay");
                             unsafe {
                                 overlay.set_window_handle(window_handle);
@@ -130,67 +134,81 @@ impl VideoPlayer {
         });
     }
 
-    /// Set up asynchronous bus message handler
+    /// Start watching the bus for messages using GLib main loop
     ///
-    /// This handles errors, warnings, end-of-stream, and state changes.
-    /// Returns a BusWatchGuard that must be kept alive for the watch to remain active.
-    fn setup_bus_handler(&self, pipeline: &gst::Element) -> Result<gst::bus::BusWatchGuard, VideoPlayerError> {
-        let bus = pipeline.bus().ok_or(VideoPlayerError::BusError)?;
+    /// This sets up a message handler that will be called automatically
+    /// when messages arrive on the bus. Returns a Result to indicate success.
+    pub fn start_message_watch(&mut self) -> Result<(), VideoPlayerError> {
+        if let Some(ref pipeline) = self.pipeline {
+            let bus = pipeline.bus().ok_or(VideoPlayerError::BusError)?;
 
-        let pipeline_weak = pipeline.downgrade();
+            // Clone the pipeline for use in the closure
+            let pipeline_weak = pipeline.downgrade();
 
-        let watch_id = bus.add_watch(move |_bus, msg| {
-            use gst::MessageView;
+            // Capture the render_rect for use in AsyncDone handler
+            let render_rect = self.render_rect;
 
-            match msg.view() {
-                MessageView::Eos(..) => {
-                    println!("VideoPlayer: End of stream reached");
-                    // Could loop or stop here
-                    if let Some(pipeline) = pipeline_weak.upgrade() {
-                        let _ = pipeline.set_state(gst::State::Null);
+            let guard = bus
+                .add_watch(move |_bus, msg| {
+                    use gst::MessageView;
+
+                    // Get a strong reference to the pipeline if it still exists
+                    let pipeline = match pipeline_weak.upgrade() {
+                        Some(p) => p,
+                        None => return gst::glib::ControlFlow::Break,
+                    };
+
+                    match msg.view() {
+                        MessageView::Eos(..) => {
+                            println!("VideoPlayer: End of stream reached");
+                            // Could loop or stop here
+                            let _ = pipeline.set_state(gst::State::Null);
+                        }
+                        MessageView::Error(err) => {
+                            eprintln!(
+                                "VideoPlayer Error from {:?}: {} ({:?})",
+                                err.src().map(|s| s.path_string()),
+                                err.error(),
+                                err.debug()
+                            );
+                            let _ = pipeline.set_state(gst::State::Null);
+                        }
+                        MessageView::Warning(warning) => {
+                            eprintln!(
+                                "VideoPlayer Warning from {:?}: {} ({:?})",
+                                warning.src().map(|s| s.path_string()),
+                                warning.error(),
+                                warning.debug()
+                            );
+                        }
+                        MessageView::StateChanged(state_changed) => {
+                            // Only handle state changes from the pipeline itself, not child elements
+                            if msg.src().map(|s| s == &pipeline).unwrap_or(false) {
+                                println!(
+                                    "VideoPlayer: Pipeline state changed from {:?} to {:?}",
+                                    state_changed.old(),
+                                    state_changed.current()
+                                );
+                            }
+                        }
+                        MessageView::AsyncDone(..) => {
+                            println!("VideoPlayer: Async state change completed");
+                        }
+                        _ => {}
                     }
-                    gst::glib::ControlFlow::Continue
-                }
-                MessageView::Error(err) => {
-                    eprintln!(
-                        "VideoPlayer Error from {:?}: {} ({:?})",
-                        err.src().map(|s| s.path_string()),
-                        err.error(),
-                        err.debug()
-                    );
-                    if let Some(pipeline) = pipeline_weak.upgrade() {
-                        let _ = pipeline.set_state(gst::State::Null);
-                    }
-                    gst::glib::ControlFlow::Continue
-                }
-                MessageView::Warning(warning) => {
-                    eprintln!("VideoPlayer Warning from {:?}: {} ({:?})",
-                        warning.src().map(|s| s.path_string()),
-                        warning.error(),
-                        warning.debug()
-                    );
-                    gst::glib::ControlFlow::Continue
-                }
-                MessageView::StateChanged(state_changed) => {
-                    if msg.src().and_then(|s| pipeline_weak.upgrade().map(|p| s == &p)).unwrap_or(false) {
-                        println!(
-                            "VideoPlayer: Pipeline state changed from {:?} to {:?}",
-                            state_changed.old(),
-                            state_changed.current()
-                        );
-                    }
-                    gst::glib::ControlFlow::Continue
-                }
-                MessageView::AsyncDone(..) => {
-                    println!("VideoPlayer: Async state change completed");
-                    gst::glib::ControlFlow::Continue
-                }
-                _ => gst::glib::ControlFlow::Continue,
-            }
-        })
-        .map_err(|_| VideoPlayerError::BusError)?;
 
-        Ok(watch_id)
+                    gst::glib::ControlFlow::Continue
+                })
+                .map_err(|_| VideoPlayerError::BusError)?;
+
+            // Store the guard to prevent it from being dropped
+            self.bus_watch_guard = Some(guard);
+
+            println!("VideoPlayer: Bus watch started");
+            Ok(())
+        } else {
+            Err(VideoPlayerError::NoWindowHandle)
+        }
     }
 
     /// Start playback
@@ -254,10 +272,7 @@ impl VideoPlayer {
         if let Some(ref pipeline) = self.pipeline {
             println!("VideoPlayer: Seeking to {:?}", position);
             pipeline
-                .seek_simple(
-                    gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
-                    position,
-                )
+                .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, position)
                 .map_err(|_| {
                     eprintln!("VideoPlayer: Seek failed");
                     VideoPlayerError::InvalidFilePath
@@ -282,10 +297,11 @@ impl Drop for VideoPlayer {
     }
 }
 
-/// Initialize GStreamer
+/// Initialize GStreamer and start the GLib main loop
 ///
 /// This should be called once at application startup before creating any
-/// VideoPlayer instances.
+/// VideoPlayer instances. It initializes GStreamer and starts a background
+/// thread running the GLib main loop to handle bus messages.
 pub fn init() -> Result<(), VideoPlayerError> {
     gst::init().map_err(VideoPlayerError::GStreamerInit)?;
 
@@ -293,7 +309,13 @@ pub fn init() -> Result<(), VideoPlayerError> {
     println!("GStreamer version: {}", gst::version_string());
 
     // Check for required plugins
-    let required_plugins = ["playbin", "qtdemux", "glimagesink", "videoscale", "videoconvert"];
+    let required_plugins = [
+        "playbin",
+        "qtdemux",
+        "glimagesink",
+        "videoscale",
+        "videoconvert",
+    ];
     let mut missing_plugins = Vec::new();
 
     for plugin_name in &required_plugins {
@@ -304,8 +326,18 @@ pub fn init() -> Result<(), VideoPlayerError> {
 
     if !missing_plugins.is_empty() {
         eprintln!("Warning: Missing GStreamer plugins: {:?}", missing_plugins);
-        eprintln!("Some features may not work. Install with: brew install gstreamer gst-plugins-base gst-plugins-good");
+        eprintln!(
+            "Some features may not work. Install with: brew install gstreamer gst-plugins-base gst-plugins-good"
+        );
     }
+
+    // Start the GLib main loop in a background thread
+    // This is required for bus watches to work
+    std::thread::spawn(|| {
+        println!("GLib main loop thread started");
+        let main_loop = gst::glib::MainLoop::new(None, false);
+        main_loop.run();
+    });
 
     Ok(())
 }
