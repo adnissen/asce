@@ -95,8 +95,8 @@ struct ControlsWindow {
     current_position: f32,
     duration: f32,
     is_playing: bool,
-    clip_start: Option<f32>,
-    clip_end: Option<f32>,
+    clip_start: Option<f32>, // stored in milliseconds
+    clip_end: Option<f32>,   // stored in milliseconds
     is_exporting: bool,
 }
 
@@ -147,8 +147,9 @@ impl ControlsWindow {
 
         if let Ok(player) = video_player.lock() {
             if let Some((position, duration)) = player.get_position_duration() {
-                self.current_position = position.seconds() as f32;
-                self.duration = duration.seconds() as f32;
+                // Use nseconds() to get precise nanosecond timing, then convert to seconds
+                self.current_position = position.nseconds() as f32 / 1_000_000_000.0;
+                self.duration = duration.nseconds() as f32 / 1_000_000_000.0;
             }
             self.is_playing = player.is_playing();
         }
@@ -161,9 +162,18 @@ impl ControlsWindow {
         format!("{:02}:{:02}", mins, secs)
     }
 
+    fn format_time_ms(milliseconds: f32) -> String {
+        let total_ms = milliseconds as u64;
+        let total_secs = total_ms / 1000;
+        let ms = total_ms % 1000;
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        format!("{:02}:{:02}.{:03}", mins, secs, ms)
+    }
+
     fn handle_export_click(&mut self, cx: &mut Context<Self>) {
-        // Get clip times
-        let clip_start = match self.clip_start {
+        // Get clip times (stored in milliseconds)
+        let clip_start_ms = match self.clip_start {
             Some(start) => start,
             None => {
                 eprintln!("Export error: clip start not set");
@@ -171,13 +181,17 @@ impl ControlsWindow {
             }
         };
 
-        let clip_end = match self.clip_end {
+        let clip_end_ms = match self.clip_end {
             Some(end) => end,
             None => {
                 eprintln!("Export error: clip end not set");
                 return;
             }
         };
+
+        // Convert milliseconds to seconds for ffmpeg
+        let clip_start = clip_start_ms / 1000.0;
+        let clip_end = clip_end_ms / 1000.0;
 
         // Get the input file path from AppState
         let app_state = cx.global::<AppState>();
@@ -347,9 +361,9 @@ impl Render for ControlsWindow {
                                             .gap_1()
                                             .child(div().text_xs().text_color(rgb(0xffffff)).child(
                                                 if let Some(start) = self.clip_start {
-                                                    format!("Start: {}", Self::format_time(start))
+                                                    format!("Start: {}", Self::format_time_ms(start))
                                                 } else {
-                                                    "Start: --:--".to_string()
+                                                    "Start: --:--.---".to_string()
                                                 },
                                             ))
                                             .child(
@@ -365,18 +379,18 @@ impl Render for ControlsWindow {
                                                     .on_mouse_down(
                                                         gpui::MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
-                                                            let current_time =
-                                                                this.current_position;
+                                                            let current_time_ms =
+                                                                this.current_position * 1000.0;
 
                                                             // Check if this would violate the constraint
                                                             if let Some(end) = this.clip_end {
-                                                                if current_time >= end {
+                                                                if current_time_ms >= end {
                                                                     // Unset clip_end if start would be after it
                                                                     this.clip_end = None;
                                                                 }
                                                             }
 
-                                                            this.clip_start = Some(current_time);
+                                                            this.clip_start = Some(current_time_ms);
                                                             cx.notify();
                                                         }),
                                                     )
@@ -391,9 +405,9 @@ impl Render for ControlsWindow {
                                             .gap_1()
                                             .child(div().text_xs().text_color(rgb(0xffffff)).child(
                                                 if let Some(end) = self.clip_end {
-                                                    format!("End: {}", Self::format_time(end))
+                                                    format!("End: {}", Self::format_time_ms(end))
                                                 } else {
-                                                    "End: --:--".to_string()
+                                                    "End: --:--.---".to_string()
                                                 },
                                             ))
                                             .child(
@@ -409,18 +423,18 @@ impl Render for ControlsWindow {
                                                     .on_mouse_down(
                                                         gpui::MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
-                                                            let current_time =
-                                                                this.current_position;
+                                                            let current_time_ms =
+                                                                this.current_position * 1000.0;
 
                                                             // Check if this would violate the constraint
                                                             if let Some(start) = this.clip_start {
-                                                                if current_time <= start {
+                                                                if current_time_ms <= start {
                                                                     // Unset clip_start if end would be before it
                                                                     this.clip_start = None;
                                                                 }
                                                             }
 
-                                                            this.clip_end = Some(current_time);
+                                                            this.clip_end = Some(current_time_ms);
                                                             cx.notify();
                                                         }),
                                                     )
@@ -443,7 +457,7 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .text_xs()
                                                     .text_color(rgb(0xffffff))
-                                                    .child(format!("Duration: {}", Self::format_time(duration))),
+                                                    .child(format!("Duration: {}", Self::format_time_ms(duration))),
                                             )
                                             .child(
                                                 div()
