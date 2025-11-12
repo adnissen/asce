@@ -277,8 +277,10 @@ impl VideoPlayer {
     pub fn seek(&self, position: gst::ClockTime) -> Result<(), VideoPlayerError> {
         if let Some(ref pipeline) = self.pipeline {
             println!("VideoPlayer: Seeking to {:?}", position);
+            // Use ACCURATE flag for precise seeking to exact timestamps
+            // This is important for subtitle synchronization
             pipeline
-                .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, position)
+                .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, position)
                 .map_err(|_| {
                     eprintln!("VideoPlayer: Seek failed");
                     VideoPlayerError::InvalidFilePath

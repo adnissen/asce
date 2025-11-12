@@ -171,6 +171,8 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "raw-window-handle",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
