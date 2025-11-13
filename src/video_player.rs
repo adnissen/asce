@@ -291,6 +291,50 @@ impl VideoPlayer {
             Err(VideoPlayerError::NoWindowHandle)
         }
     }
+
+    /// Enable or disable subtitle display
+    ///
+    /// When enabled, sets current-text to the specified track.
+    /// When disabled, sets current-text to -1.
+    pub fn set_subtitle_display(
+        &self,
+        enabled: bool,
+        track_index: Option<i32>,
+    ) -> Result<(), VideoPlayerError> {
+        if let Some(ref pipeline) = self.pipeline {
+            if enabled {
+                if let Some(index) = track_index {
+                    println!(
+                        "VideoPlayer: Enabling subtitle display with track {}",
+                        index
+                    );
+                    pipeline.set_property("current-text", index);
+                } else {
+                    println!("VideoPlayer: Cannot enable subtitles - no track specified");
+                    return Err(VideoPlayerError::InvalidFilePath);
+                }
+            } else {
+                println!("VideoPlayer: Disabling subtitle display");
+                pipeline.set_property("current-text", -1);
+            }
+            Ok(())
+        } else {
+            eprintln!("VideoPlayer: No pipeline loaded");
+            Err(VideoPlayerError::NoWindowHandle)
+        }
+    }
+
+    /// Set the current subtitle track to display
+    pub fn set_subtitle_track(&self, track_index: i32) -> Result<(), VideoPlayerError> {
+        if let Some(ref pipeline) = self.pipeline {
+            println!("VideoPlayer: Setting subtitle track to {}", track_index);
+            pipeline.set_property("current-text", track_index);
+            Ok(())
+        } else {
+            eprintln!("VideoPlayer: No pipeline loaded");
+            Err(VideoPlayerError::NoWindowHandle)
+        }
+    }
 }
 
 impl Drop for VideoPlayer {

@@ -45,7 +45,7 @@ impl Render for InitialWindow {
         div()
             .flex()
             .flex_col()
-            .bg(rgb(0x2e7d32))
+            .bg(rgb(0x1a1a1a))
             .size_full()
             .justify_center()
             .items_center()
@@ -54,12 +54,12 @@ impl Render for InitialWindow {
                     .id("open-file-button")
                     .px_8()
                     .py_4()
-                    .bg(rgb(0x388e3c))
+                    .bg(rgb(0x404040))
                     .rounded_lg()
                     .cursor_pointer()
                     .text_xl()
                     .text_color(rgb(0xffffff))
-                    .hover(|style| style.bg(rgb(0x4caf50)))
+                    .hover(|style| style.bg(rgb(0x505050)))
                     .on_click(|_, _window, cx| {
                         let paths = cx.prompt_for_paths(PathPromptOptions {
                             files: true,
@@ -138,6 +138,20 @@ impl SubtitleWindow {
         cx.subscribe(&select_state, |this, _, event: &SelectEvent, cx| {
             let SelectEvent::Change(index) = event;
             this.load_subtitle_stream(*index, cx);
+
+            // Update AppState with the selected subtitle track
+            cx.update_global::<AppState, _>(|state, _| {
+                state.selected_subtitle_track = Some(*index);
+            });
+
+            // If subtitle display is enabled in controls, update the video player
+            let app_state = cx.global::<AppState>();
+            let video_player = app_state.video_player.clone();
+            if let Ok(player) = video_player.lock() {
+                if let Err(e) = player.set_subtitle_track(*index as i32) {
+                    eprintln!("Failed to set subtitle track: {}", e);
+                }
+            }
         })
         .detach();
 
@@ -535,6 +549,7 @@ impl Render for SubtitleWindow {
 /// Controls window with play/pause/stop buttons and video scrubber
 struct ControlsWindow {
     slider_state: Entity<SliderState>,
+    display_subtitles: Entity<CheckboxState>,
     current_position: f32,
     duration: f32,
     is_playing: bool,
@@ -573,8 +588,31 @@ impl ControlsWindow {
         })
         .detach();
 
+        // Create checkbox state for subtitle display (unchecked by default)
+        let display_subtitles = cx.new(|_cx| CheckboxState::new(false));
+
+        // Subscribe to checkbox events to control subtitle display
+        cx.subscribe(
+            &display_subtitles,
+            |_this, _, event: &CheckboxEvent, cx| {
+                let CheckboxEvent::Change(checked) = event;
+                let app_state = cx.global::<AppState>();
+                let video_player = app_state.video_player.clone();
+                let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
+
+                if let Ok(player) = video_player.lock() {
+                    // Enable or disable subtitle display
+                    if let Err(e) = player.set_subtitle_display(*checked, selected_track) {
+                        eprintln!("Failed to set subtitle display: {}", e);
+                    }
+                }
+            },
+        )
+        .detach();
+
         Self {
             slider_state,
+            display_subtitles,
             current_position: 0.0,
             duration: 0.0,
             is_playing: false,
@@ -745,7 +783,7 @@ impl Render for ControlsWindow {
         div()
             .flex()
             .flex_col()
-            .bg(rgb(0x1b5e20))
+            .bg(rgb(0x1a1a1a))
             .size_full()
             .p_4()
             .gap_3()
@@ -941,11 +979,11 @@ impl Render for ControlsWindow {
                         div()
                             .px_6()
                             .py_3()
-                            .bg(rgb(0x388e3c))
+                            .bg(rgb(0x404040))
                             .rounded_md()
                             .cursor_pointer()
                             .text_color(rgb(0xffffff))
-                            .hover(|style| style.bg(rgb(0x4caf50)))
+                            .hover(|style| style.bg(rgb(0x505050)))
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(|this, _, _, cx| {
@@ -966,8 +1004,15 @@ impl Render for ControlsWindow {
                             )
                             .child(if self.is_playing { "Pause" } else { "Play" }),
                     )
-                    // Right side: Empty for now (to balance the layout)
-                    .child(div().w(px(150.0))),
+                    // Right side: Display subtitles checkbox
+                    .child(
+                        div()
+                            .w(px(150.0))
+                            .child(
+                                Checkbox::new(&self.display_subtitles)
+                                    .label("Display subtitles"),
+                            ),
+                    ),
             )
     }
 }
@@ -1110,6 +1155,7 @@ struct AppState {
     subtitle_window: Option<AnyWindowHandle>,
     video_player: Arc<Mutex<video_player::VideoPlayer>>,
     synced_to_video: bool,
+    selected_subtitle_track: Option<usize>, // Currently selected subtitle track index
 }
 
 impl AppState {
@@ -1122,6 +1168,7 @@ impl AppState {
             subtitle_window: None,
             video_player: Arc::new(Mutex::new(video_player::VideoPlayer::new())),
             synced_to_video: true, // Default to checked/synced
+            selected_subtitle_track: None, // No track selected initially
         }
     }
 
@@ -1212,13 +1259,16 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
         .unwrap_or("Video Player")
         .to_string();
 
+    // Calculate video window size (half of typical 1920px screen, maintain 16:9 aspect ratio)
+    let video_width = 960.0;
+    let video_height = video_width * 9.0 / 16.0; // 540px to maintain 16:9 aspect ratio
+
     // Create the video player window (closable)
     let video_window_options = WindowOptions {
-        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-            None,
-            gpui::size(px(1280.0), px(720.0)),
-            cx,
-        ))),
+        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds {
+            origin: gpui::point(px(20.0), px(20.0)), // Start at top of screen with small margin
+            size: gpui::size(px(video_width), px(video_height)),
+        })),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         focus: true,
         is_movable: true,
@@ -1276,7 +1326,7 @@ fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
     // Calculate position for subtitle window (to the right of video window)
     let subtitle_x = video_bounds.origin.x + video_bounds.size.width;
     let subtitle_y = video_bounds.origin.y;
-    let subtitle_width = px(400.0); // Fixed width for subtitle window
+    let subtitle_width = px(300.0); // Proportionally scaled subtitle window width
     let subtitle_height = video_bounds.size.height; // Match video window height
 
     // Create the subtitle window
