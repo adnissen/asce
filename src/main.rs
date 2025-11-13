@@ -388,7 +388,6 @@ impl Render for SubtitleWindow {
                 self.scroll_handle
                     .scroll_to_item(search_subtitle_idx, ScrollStrategy::Center);
                 self.last_scrolled_to_search = Some(search_subtitle_idx);
-                self.last_scrolled_to_video = None; // Clear video scroll tracking
             }
         } else if let Some(current_idx) = self.current_subtitle_index {
             // Otherwise, scroll to current video position subtitle (only if it changed)
@@ -396,7 +395,6 @@ impl Render for SubtitleWindow {
                 self.scroll_handle
                     .scroll_to_item(current_idx, ScrollStrategy::Bottom);
                 self.last_scrolled_to_video = Some(current_idx);
-                self.last_scrolled_to_search = None; // Clear search scroll tracking
             }
         }
 
