@@ -38,7 +38,6 @@ impl std::error::Error for VideoPlayerError {}
 pub struct VideoPlayer {
     pipeline: Option<gst::Element>,
     ns_view_handle: Option<usize>,
-    render_rect: Option<(i32, i32, i32, i32)>, // x, y, width, height
     bus_watch_guard: Option<gst::bus::BusWatchGuard>,
 }
 
@@ -48,7 +47,6 @@ impl VideoPlayer {
         Self {
             pipeline: None,
             ns_view_handle: None,
-            render_rect: Some((0, 0, 800, 600)),
             bus_watch_guard: None,
         }
     }

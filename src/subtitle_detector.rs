@@ -10,24 +10,8 @@ use std::process::Command;
 /// Information about a subtitle stream found in a video file
 #[derive(Debug, Clone)]
 pub struct SubtitleStream {
-    /// Stream index (e.g., 0, 1, 2...)
-    pub index: usize,
-    /// Codec name (e.g., "subrip", "ass", "webvtt", "mov_text")
-    pub codec_name: String,
-    /// Language code if available (e.g., "eng", "spa", "fra")
-    pub language: Option<String>,
     /// Human-readable display title for UI
     pub display_title: String,
-}
-
-impl SubtitleStream {
-    /// Check if this subtitle stream can be exported as SRT
-    pub fn is_text_based(&self) -> bool {
-        matches!(
-            self.codec_name.as_str(),
-            "subrip" | "ass" | "ssa" | "webvtt" | "mov_text" | "srt" | "text"
-        )
-    }
 }
 
 /// Detect all text-based subtitle streams in a video file
@@ -86,7 +70,6 @@ struct FfprobeOutput {
 
 #[derive(Debug, Deserialize)]
 struct FfprobeStream {
-    index: usize,
     codec_name: String,
     #[serde(default)]
     tags: HashMap<String, String>,
@@ -124,12 +107,7 @@ fn parse_ffprobe_json(json: &str) -> Vec<SubtitleStream> {
             // Create display title
             let display_title = format_display_title(subtitle_index, &stream.codec_name, &language);
 
-            streams.push(SubtitleStream {
-                index: subtitle_index,
-                codec_name: stream.codec_name,
-                language,
-                display_title,
-            });
+            streams.push(SubtitleStream { display_title });
 
             subtitle_index += 1;
         }
@@ -167,28 +145,24 @@ mod tests {
 
     #[test]
     fn test_parse_single_subtitle() {
-        let json = r#"{"streams": [{"index": 2, "codec_name": "subrip", "tags": {"language": "eng"}}]}"#;
+        let json = r#"{"streams": [{"codec_name": "subrip", "tags": {"language": "eng"}}]}"#;
         let streams = parse_ffprobe_json(json);
         assert_eq!(streams.len(), 1);
-        assert_eq!(streams[0].index, 0); // Subtitle index, not stream index
-        assert_eq!(streams[0].codec_name, "subrip");
-        assert_eq!(streams[0].language, Some("eng".to_string()));
+        assert!(streams[0].display_title.contains("ENG"));
     }
 
     #[test]
     fn test_filter_non_text_subtitles() {
-        let json = r#"{"streams": [{"index": 2, "codec_name": "subrip", "tags": {}}, {"index": 3, "codec_name": "dvd_subtitle", "tags": {}}]}"#;
+        let json =
+            r#"{"streams": [{"codec_name": "subrip", "tags": {}}, {"codec_name": "dvd_subtitle", "tags": {}}]}"#;
         let streams = parse_ffprobe_json(json);
         assert_eq!(streams.len(), 1);
-        assert_eq!(streams[0].codec_name, "subrip");
     }
 
     #[test]
     fn test_multiple_subtitle_streams() {
-        let json = r#"{"streams": [{"index": 2, "codec_name": "subrip", "tags": {"language": "eng"}}, {"index": 3, "codec_name": "subrip", "tags": {"language": "spa"}}]}"#;
+        let json = r#"{"streams": [{"codec_name": "subrip", "tags": {"language": "eng"}}, {"codec_name": "subrip", "tags": {"language": "spa"}}]}"#;
         let streams = parse_ffprobe_json(json);
         assert_eq!(streams.len(), 2);
-        assert_eq!(streams[0].language, Some("eng".to_string()));
-        assert_eq!(streams[1].language, Some("spa".to_string()));
     }
 }

@@ -3,9 +3,8 @@
 //! A dropdown component for selecting from a list of options.
 
 use gpui::{
-    div, prelude::*, px, rgb, App, Bounds, Context, Empty, Entity, EventEmitter,
-    IntoElement, MouseButton, MouseDownEvent, Pixels, Render, RenderOnce, StyleRefinement,
-    Styled, Window,
+    div, prelude::*, px, rgb, App, Context, Empty, Entity, EventEmitter, IntoElement, MouseButton,
+    MouseDownEvent, Render, RenderOnce, StyleRefinement, Styled, Window,
 };
 
 /// Events emitted by the SelectState
@@ -19,9 +18,6 @@ pub enum SelectEvent {
 pub trait SelectItem: Clone + 'static {
     /// Get the display title for this item
     fn display_title(&self) -> String;
-
-    /// Get the value/index for this item
-    fn value(&self) -> usize;
 }
 
 /// State of the Select component
@@ -29,7 +25,6 @@ pub struct SelectState<T: SelectItem> {
     items: Vec<T>,
     selected_index: Option<usize>,
     is_open: bool,
-    bounds: Bounds<Pixels>,
 }
 
 impl<T: SelectItem> SelectState<T> {
@@ -39,7 +34,6 @@ impl<T: SelectItem> SelectState<T> {
             items,
             selected_index: None,
             is_open: false,
-            bounds: Bounds::default(),
         }
     }
 

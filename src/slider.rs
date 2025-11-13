@@ -50,12 +50,6 @@ impl Default for SliderValue {
 }
 
 impl SliderValue {
-    pub fn clamp(self, min: f32, max: f32) -> Self {
-        match self {
-            SliderValue::Single(value) => SliderValue::Single(value.clamp(min, max)),
-        }
-    }
-
     pub fn end(&self) -> f32 {
         match self {
             SliderValue::Single(value) => *value,
@@ -129,10 +123,6 @@ impl SliderState {
         self.value = value.into();
         self.update_thumb_pos();
         cx.notify();
-    }
-
-    pub fn value(&self) -> SliderValue {
-        self.value
     }
 
     pub fn get_max(&self) -> f32 {
@@ -214,10 +204,6 @@ impl SliderState {
     pub fn clear_hover(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.hover_position = None;
         cx.notify();
-    }
-
-    pub fn get_hover_value(&self) -> Option<f32> {
-        self.hover_position.map(|p| self.percentage_to_value(p))
     }
 }
 

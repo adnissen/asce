@@ -8,8 +8,6 @@ use std::process::Command;
 /// A single subtitle entry with timing and text
 #[derive(Debug, Clone)]
 pub struct SubtitleEntry {
-    /// Entry number/index
-    pub index: usize,
     /// Start time in milliseconds
     pub start_ms: u64,
     /// End time in milliseconds
@@ -27,17 +25,6 @@ impl SubtitleEntry {
     /// Format end time as SRT timecode (HH:MM:SS,mmm)
     pub fn format_end_time(&self) -> String {
         format_timecode(self.end_ms)
-    }
-
-    /// Format as full SRT entry string
-    pub fn to_srt_string(&self) -> String {
-        format!(
-            "{}\n{} --> {}\n{}\n",
-            self.index,
-            self.format_start_time(),
-            self.format_end_time(),
-            self.text
-        )
     }
 }
 
@@ -105,7 +92,7 @@ pub fn parse_srt(srt_content: &str) -> Vec<SubtitleEntry> {
         }
 
         // Try to parse as entry index
-        if let Ok(index) = line.parse::<usize>() {
+        if line.parse::<usize>().is_ok() {
             // Next line should be timecode
             if let Some(timecode_line) = lines.next() {
                 if let Some((start_ms, end_ms)) = parse_timecode_line(timecode_line) {
@@ -123,7 +110,6 @@ pub fn parse_srt(srt_content: &str) -> Vec<SubtitleEntry> {
                     let text = text_lines.join("\n");
 
                     entries.push(SubtitleEntry {
-                        index,
                         start_ms,
                         end_ms,
                         text,
@@ -223,12 +209,10 @@ with multiple lines
 
         let entries = parse_srt(srt);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].index, 1);
         assert_eq!(entries[0].start_ms, 10500);
         assert_eq!(entries[0].end_ms, 13000);
         assert_eq!(entries[0].text, "First subtitle line");
 
-        assert_eq!(entries[1].index, 2);
         assert_eq!(entries[1].start_ms, 15000);
         assert_eq!(entries[1].end_ms, 18500);
         assert_eq!(entries[1].text, "Second subtitle line\nwith multiple lines");
