@@ -1,6 +1,4 @@
-use gpui::{
-    div, prelude::*, px, rgb, Context, Entity, IntoElement, MouseButton, Render, Window,
-};
+use gpui::{div, prelude::*, px, rgb, Context, Entity, IntoElement, MouseButton, Render, Window};
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::slider::{Slider, SliderEvent, SliderState, SliderValue};
@@ -55,23 +53,20 @@ impl ControlsWindow {
         let display_subtitles = cx.new(|_cx| CheckboxState::new(false));
 
         // Subscribe to checkbox events to control subtitle display
-        cx.subscribe(
-            &display_subtitles,
-            |_this, _, event: &CheckboxEvent, cx| {
-                let CheckboxEvent::Change(checked) = event;
-                let app_state = cx.global::<AppState>();
-                let video_player = app_state.video_player.clone();
-                let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
+        cx.subscribe(&display_subtitles, |_this, _, event: &CheckboxEvent, cx| {
+            let CheckboxEvent::Change(checked) = event;
+            let app_state = cx.global::<AppState>();
+            let video_player = app_state.video_player.clone();
+            let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
 
-                if let Ok(player) = video_player.lock() {
-                    if let Err(e) = player.set_subtitle_display(*checked, selected_track) {
-                        eprintln!("Failed to set subtitle display: {}", e);
-                    }
-                } else {
-                    eprintln!("Failed to lock video player for subtitle display toggle");
-                };
-            },
-        )
+            if let Ok(player) = video_player.lock() {
+                if let Err(e) = player.set_subtitle_display(*checked, selected_track) {
+                    eprintln!("Failed to set subtitle display: {}", e);
+                }
+            } else {
+                eprintln!("Failed to lock video player for subtitle display toggle");
+            };
+        })
         .detach();
 
         // Create time input fields for clip start and end
@@ -124,14 +119,20 @@ impl ControlsWindow {
 
     fn handle_export_click(&mut self, cx: &mut Context<Self>) {
         // Try to get times from input fields first, fall back to stored values
-        let clip_start_ms = self.clip_start_input.read(cx).parse_time_ms()
+        let clip_start_ms = self
+            .clip_start_input
+            .read(cx)
+            .parse_time_ms()
             .or(self.clip_start)
             .unwrap_or_else(|| {
                 eprintln!("Export error: clip start not set");
                 0.0
             });
 
-        let clip_end_ms = self.clip_end_input.read(cx).parse_time_ms()
+        let clip_end_ms = self
+            .clip_end_input
+            .read(cx)
+            .parse_time_ms()
             .or(self.clip_end)
             .unwrap_or_else(|| {
                 eprintln!("Export error: clip end not set");
@@ -315,7 +316,6 @@ impl Render for ControlsWindow {
                                             .flex_col()
                                             .gap_1()
                                             .w(px(100.0))
-                                            .child(div().text_xs().text_color(rgb(0xaaaaaa)).child("Start"))
                                             .child(self.clip_start_input.clone())
                                             .child(
                                                 div()
@@ -338,24 +338,36 @@ impl Render for ControlsWindow {
                                                                 if current_time_ms >= end {
                                                                     // Unset clip_end if start would be after it
                                                                     this.clip_end = None;
-                                                                    this.clip_end_input.update(cx, |input, cx| {
-                                                                        input.set_content("".to_string(), cx);
-                                                                    });
+                                                                    this.clip_end_input.update(
+                                                                        cx,
+                                                                        |input, cx| {
+                                                                            input.set_content(
+                                                                                "".to_string(),
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    );
                                                                 }
                                                             }
 
                                                             this.clip_start = Some(current_time_ms);
 
                                                             // Update the input field
-                                                            let formatted = Self::format_time_ms(current_time_ms);
-                                                            this.clip_start_input.update(cx, |input, cx| {
-                                                                input.set_content(formatted, cx);
-                                                            });
+                                                            let formatted = Self::format_time_ms(
+                                                                current_time_ms,
+                                                            );
+                                                            this.clip_start_input.update(
+                                                                cx,
+                                                                |input, cx| {
+                                                                    input
+                                                                        .set_content(formatted, cx);
+                                                                },
+                                                            );
 
                                                             cx.notify();
                                                         }),
                                                     )
-                                                    .child("Set"),
+                                                    .child("Set Start"),
                                             ),
                                     )
                                     // Clip end section
@@ -365,7 +377,6 @@ impl Render for ControlsWindow {
                                             .flex_col()
                                             .gap_1()
                                             .w(px(100.0))
-                                            .child(div().text_xs().text_color(rgb(0xaaaaaa)).child("End"))
                                             .child(self.clip_end_input.clone())
                                             .child(
                                                 div()
@@ -388,64 +399,120 @@ impl Render for ControlsWindow {
                                                                 if current_time_ms <= start {
                                                                     // Unset clip_start if end would be before it
                                                                     this.clip_start = None;
-                                                                    this.clip_start_input.update(cx, |input, cx| {
-                                                                        input.set_content("".to_string(), cx);
-                                                                    });
+                                                                    this.clip_start_input.update(
+                                                                        cx,
+                                                                        |input, cx| {
+                                                                            input.set_content(
+                                                                                "".to_string(),
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    );
                                                                 }
                                                             }
 
                                                             this.clip_end = Some(current_time_ms);
 
                                                             // Update the input field
-                                                            let formatted = Self::format_time_ms(current_time_ms);
-                                                            this.clip_end_input.update(cx, |input, cx| {
-                                                                input.set_content(formatted, cx);
-                                                            });
+                                                            let formatted = Self::format_time_ms(
+                                                                current_time_ms,
+                                                            );
+                                                            this.clip_end_input.update(
+                                                                cx,
+                                                                |input, cx| {
+                                                                    input
+                                                                        .set_content(formatted, cx);
+                                                                },
+                                                            );
 
                                                             cx.notify();
                                                         }),
                                                     )
-                                                    .child("Set"),
+                                                    .child("Set End"),
                                             ),
-                                    ),
-                            )
-                            // Display total clip length and export button if both times are set
-                            .when_some(
-                                {
-                                    let start_ms = self.clip_start_input.read(cx).parse_time_ms().or(self.clip_start);
-                                    let end_ms = self.clip_end_input.read(cx).parse_time_ms().or(self.clip_end);
-                                    start_ms.and_then(|start| end_ms.map(|end| if end > start { end - start } else { 0.0 }))
-                                },
-                                |this, duration| {
-                                    this.child(
+                                    )
+                                    .child({
+                                        let start_ms = self
+                                            .clip_start_input
+                                            .read(cx)
+                                            .parse_time_ms()
+                                            .or(self.clip_start);
+                                        let end_ms = self
+                                            .clip_end_input
+                                            .read(cx)
+                                            .parse_time_ms()
+                                            .or(self.clip_end);
+                                        let duration = start_ms.and_then(|start| {
+                                            end_ms.map(
+                                                |end| if end > start { end - start } else { 0.0 },
+                                            )
+                                        });
+                                        let is_valid =
+                                            duration.is_some() && duration.unwrap() > 0.0;
+
                                         div()
                                             .flex()
-                                            .flex_row()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(div().text_xs().text_color(rgb(0xffffff)).child(
-                                                format!(
-                                                    "Duration: {}",
-                                                    Self::format_time_ms(duration)
-                                                ),
-                                            ))
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(if is_valid {
+                                                        rgb(0xffffff)
+                                                    } else {
+                                                        rgb(0x666666)
+                                                    })
+                                                    .child(format!(
+                                                        "Duration: {}",
+                                                        Self::format_time_ms(
+                                                            duration.unwrap_or(0.0)
+                                                        )
+                                                    )),
+                                            )
                                             .child(
                                                 div()
                                                     .px_3()
                                                     .py_1()
-                                                    .bg(rgb(0xf57c00))
                                                     .rounded_md()
-                                                    .cursor_pointer()
                                                     .text_xs()
-                                                    .text_color(rgb(0xffffff))
-                                                    .hover(|style| style.bg(rgb(0xfb8c00)))
-                                                    .when(self.is_exporting, |this| {
-                                                        this.bg(rgb(0x9e9e9e)).cursor_not_allowed()
+                                                    .when(is_valid && !self.is_exporting, |this| {
+                                                        this.bg(rgb(0xf57c00))
+                                                            .cursor_pointer()
+                                                            .text_color(rgb(0xffffff))
+                                                            .hover(|style| style.bg(rgb(0xfb8c00)))
+                                                    })
+                                                    .when(!is_valid || self.is_exporting, |this| {
+                                                        this.bg(rgb(0x404040))
+                                                            .cursor_not_allowed()
+                                                            .text_color(rgb(0x666666))
                                                     })
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
-                                                            if !this.is_exporting {
+                                                            let start_ms = this
+                                                                .clip_start_input
+                                                                .read(cx)
+                                                                .parse_time_ms()
+                                                                .or(this.clip_start);
+                                                            let end_ms = this
+                                                                .clip_end_input
+                                                                .read(cx)
+                                                                .parse_time_ms()
+                                                                .or(this.clip_end);
+                                                            let duration =
+                                                                start_ms.and_then(|start| {
+                                                                    end_ms.map(|end| {
+                                                                        if end > start {
+                                                                            end - start
+                                                                        } else {
+                                                                            0.0
+                                                                        }
+                                                                    })
+                                                                });
+                                                            let is_valid = duration.is_some()
+                                                                && duration.unwrap() > 0.0;
+
+                                                            if !this.is_exporting && is_valid {
                                                                 this.handle_export_click(cx);
                                                             }
                                                         }),
@@ -455,10 +522,9 @@ impl Render for ControlsWindow {
                                                     } else {
                                                         "Export"
                                                     }),
-                                            ),
-                                    )
-                                },
-                            ),
+                                            )
+                                    }),
+                            ), // Display total clip length and export button (always visible, greyed out if invalid)
                     )
                     // Center: Play/pause button
                     .child(
@@ -492,12 +558,9 @@ impl Render for ControlsWindow {
                     )
                     // Right side: Display subtitles checkbox
                     .child(
-                        div()
-                            .w(px(150.0))
-                            .child(
-                                Checkbox::new(&self.display_subtitles)
-                                    .label("Display subtitles"),
-                            ),
+                        div().w(px(150.0)).child(
+                            Checkbox::new(&self.display_subtitles).label("Display subtitles"),
+                        ),
                     ),
             )
     }
