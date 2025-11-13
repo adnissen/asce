@@ -5,6 +5,8 @@
 #[macro_use]
 extern crate objc;
 
+use clap::Parser;
+
 mod checkbox;
 mod controls_window;
 mod ffmpeg_export;
@@ -30,8 +32,16 @@ use unified_window::UnifiedWindow;
 
 use std::sync::{Arc, Mutex};
 
+#[derive(Parser, Debug)]
+#[command(name = "asve")]
+#[command(about = "ASVE - Video Editor with GPUI", long_about = None)]
+struct Cli {
+    /// Path to video file to open
+    video_path: Option<String>,
+}
 
 fn main() {
+    let cli = Cli::parse();
     // Initialize mpv before creating the GPUI application
     if let Err(e) = video_player::init() {
         eprintln!("Failed to initialize mpv: {}", e);
@@ -63,33 +73,65 @@ fn main() {
         // Add menu items
         set_app_menus(cx);
 
-        // Create a small initial window with just the "Open File" button
-        let initial_window_options = WindowOptions {
-            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-                None,
-                gpui::size(px(300.0), px(200.0)),
-                cx,
-            ))),
-            titlebar: Some(gpui::TitlebarOptions {
-                title: Some("asve".into()),
-                appears_transparent: false,
+        // Check if a video path was provided via command line
+        if let Some(video_path) = cli.video_path {
+            // Validate the file exists and has a supported extension
+            let path = std::path::Path::new(&video_path);
+            if !path.exists() {
+                eprintln!("Error: File does not exist: {}", video_path);
+                std::process::exit(1);
+            }
+
+            let extension = path.extension().and_then(|e| e.to_str());
+            let supported_extensions = ffmpeg_export::get_video_extensions();
+
+            if let Some(ext) = extension {
+                let ext_lower = ext.to_lowercase();
+                if supported_extensions.contains(&ext_lower.as_str()) {
+                    // Open the video directly
+                    println!("Opening video file: {}", video_path);
+                    let path_clone = video_path.clone();
+                    create_video_windows(cx, video_path, path_clone);
+                } else {
+                    eprintln!(
+                        "Error: Invalid file type. Supported formats: {}",
+                        supported_extensions.join(", ")
+                    );
+                    std::process::exit(1);
+                }
+            } else {
+                eprintln!("Error: File has no extension");
+                std::process::exit(1);
+            }
+        } else {
+            // No video path provided, create the initial window with "Open File" button
+            let initial_window_options = WindowOptions {
+                window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
+                    None,
+                    gpui::size(px(300.0), px(200.0)),
+                    cx,
+                ))),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some("asve".into()),
+                    appears_transparent: false,
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        };
+            };
 
-        let window = cx
-            .open_window(initial_window_options, |_window, cx| {
-                cx.new(|_| InitialWindow {})
-            })
-            .unwrap();
+            let window = cx
+                .open_window(initial_window_options, |_window, cx| {
+                    cx.new(|_| InitialWindow {})
+                })
+                .unwrap();
 
-        // Store the initial window handle
-        cx.update_global::<AppState, _>(|state, _| {
-            state.initial_window = Some(window.into());
-        });
+            // Store the initial window handle
+            cx.update_global::<AppState, _>(|state, _| {
+                state.initial_window = Some(window.into());
+            });
 
-        println!("Initial window created");
+            println!("Initial window created");
+        }
     });
 }
 
