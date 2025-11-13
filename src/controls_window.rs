@@ -4,6 +4,7 @@ use gpui::{
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::slider::{Slider, SliderEvent, SliderState, SliderValue};
+use crate::time_input::TimeInput;
 use crate::video_player::ClockTime;
 use crate::AppState;
 
@@ -11,6 +12,8 @@ use crate::AppState;
 pub struct ControlsWindow {
     slider_state: Entity<SliderState>,
     display_subtitles: Entity<CheckboxState>,
+    clip_start_input: Entity<TimeInput>,
+    clip_end_input: Entity<TimeInput>,
     current_position: f32,
     duration: f32,
     is_playing: bool,
@@ -71,9 +74,15 @@ impl ControlsWindow {
         )
         .detach();
 
+        // Create time input fields for clip start and end
+        let clip_start_input = cx.new(|cx| TimeInput::new(cx));
+        let clip_end_input = cx.new(|cx| TimeInput::new(cx));
+
         Self {
             slider_state,
             display_subtitles,
+            clip_start_input,
+            clip_end_input,
             current_position: 0.0,
             duration: 0.0,
             is_playing: false,
@@ -114,22 +123,25 @@ impl ControlsWindow {
     }
 
     fn handle_export_click(&mut self, cx: &mut Context<Self>) {
-        // Get clip times (stored in milliseconds)
-        let clip_start_ms = match self.clip_start {
-            Some(start) => start,
-            None => {
+        // Try to get times from input fields first, fall back to stored values
+        let clip_start_ms = self.clip_start_input.read(cx).parse_time_ms()
+            .or(self.clip_start)
+            .unwrap_or_else(|| {
                 eprintln!("Export error: clip start not set");
-                return;
-            }
-        };
+                0.0
+            });
 
-        let clip_end_ms = match self.clip_end {
-            Some(end) => end,
-            None => {
+        let clip_end_ms = self.clip_end_input.read(cx).parse_time_ms()
+            .or(self.clip_end)
+            .unwrap_or_else(|| {
                 eprintln!("Export error: clip end not set");
-                return;
-            }
-        };
+                0.0
+            });
+
+        if clip_start_ms >= clip_end_ms {
+            eprintln!("Export error: clip start must be before clip end");
+            return;
+        }
 
         // Convert milliseconds to seconds for ffmpeg
         let clip_start = clip_start_ms / 1000.0;
@@ -283,42 +295,36 @@ impl Render for ControlsWindow {
                     .justify_between()
                     .gap_4()
                     .w_full()
-                    // Left side: Clip start/end buttons
+                    // Left side: Clip start/end buttons and inputs
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .gap_2()
-                            // Buttons row
+                            // Buttons and inputs row
                             .child(
                                 div()
                                     .flex()
                                     .flex_row()
                                     .gap_2()
-                                    // Clip start button with time display
+                                    .items_end()
+                                    // Clip start section
                                     .child(
                                         div()
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            .child(div().text_xs().text_color(rgb(0xffffff)).child(
-                                                if let Some(start) = self.clip_start {
-                                                    format!(
-                                                        "Start: {}",
-                                                        Self::format_time_ms(start)
-                                                    )
-                                                } else {
-                                                    "Start: --:--.---".to_string()
-                                                },
-                                            ))
+                                            .w(px(100.0))
+                                            .child(div().text_xs().text_color(rgb(0xaaaaaa)).child("Start"))
+                                            .child(self.clip_start_input.clone())
                                             .child(
                                                 div()
-                                                    .px_4()
-                                                    .py_2()
+                                                    .px_2()
+                                                    .py_1()
                                                     .bg(rgb(0x1976d2))
                                                     .rounded_md()
                                                     .cursor_pointer()
-                                                    .text_sm()
+                                                    .text_xs()
                                                     .text_color(rgb(0xffffff))
                                                     .hover(|style| style.bg(rgb(0x2196f3)))
                                                     .on_mouse_down(
@@ -332,37 +338,43 @@ impl Render for ControlsWindow {
                                                                 if current_time_ms >= end {
                                                                     // Unset clip_end if start would be after it
                                                                     this.clip_end = None;
+                                                                    this.clip_end_input.update(cx, |input, cx| {
+                                                                        input.set_content("".to_string(), cx);
+                                                                    });
                                                                 }
                                                             }
 
                                                             this.clip_start = Some(current_time_ms);
+
+                                                            // Update the input field
+                                                            let formatted = Self::format_time_ms(current_time_ms);
+                                                            this.clip_start_input.update(cx, |input, cx| {
+                                                                input.set_content(formatted, cx);
+                                                            });
+
                                                             cx.notify();
                                                         }),
                                                     )
-                                                    .child("Set Clip Start"),
+                                                    .child("Set"),
                                             ),
                                     )
-                                    // Clip end button with time display
+                                    // Clip end section
                                     .child(
                                         div()
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            .child(div().text_xs().text_color(rgb(0xffffff)).child(
-                                                if let Some(end) = self.clip_end {
-                                                    format!("End: {}", Self::format_time_ms(end))
-                                                } else {
-                                                    "End: --:--.---".to_string()
-                                                },
-                                            ))
+                                            .w(px(100.0))
+                                            .child(div().text_xs().text_color(rgb(0xaaaaaa)).child("End"))
+                                            .child(self.clip_end_input.clone())
                                             .child(
                                                 div()
-                                                    .px_4()
-                                                    .py_2()
+                                                    .px_2()
+                                                    .py_1()
                                                     .bg(rgb(0xc62828))
                                                     .rounded_md()
                                                     .cursor_pointer()
-                                                    .text_sm()
+                                                    .text_xs()
                                                     .text_color(rgb(0xffffff))
                                                     .hover(|style| style.bg(rgb(0xe53935)))
                                                     .on_mouse_down(
@@ -376,21 +388,34 @@ impl Render for ControlsWindow {
                                                                 if current_time_ms <= start {
                                                                     // Unset clip_start if end would be before it
                                                                     this.clip_start = None;
+                                                                    this.clip_start_input.update(cx, |input, cx| {
+                                                                        input.set_content("".to_string(), cx);
+                                                                    });
                                                                 }
                                                             }
 
                                                             this.clip_end = Some(current_time_ms);
+
+                                                            // Update the input field
+                                                            let formatted = Self::format_time_ms(current_time_ms);
+                                                            this.clip_end_input.update(cx, |input, cx| {
+                                                                input.set_content(formatted, cx);
+                                                            });
+
                                                             cx.notify();
                                                         }),
                                                     )
-                                                    .child("Set Clip End"),
+                                                    .child("Set"),
                                             ),
                                     ),
                             )
                             // Display total clip length and export button if both times are set
                             .when_some(
-                                self.clip_start
-                                    .and_then(|start| self.clip_end.map(|end| end - start)),
+                                {
+                                    let start_ms = self.clip_start_input.read(cx).parse_time_ms().or(self.clip_start);
+                                    let end_ms = self.clip_end_input.read(cx).parse_time_ms().or(self.clip_end);
+                                    start_ms.and_then(|start| end_ms.map(|end| if end > start { end - start } else { 0.0 }))
+                                },
                                 |this, duration| {
                                     this.child(
                                         div()
