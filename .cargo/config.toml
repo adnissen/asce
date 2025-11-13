@@ -1,0 +1,5 @@
+[build]
+rustflags = ["-L", "/opt/homebrew/opt/sdl2/lib", "-L", "/opt/homebrew/lib"]
+
+[env]
+PKG_CONFIG_PATH = "/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/mpv/lib/pkgconfig"

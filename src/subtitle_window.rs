@@ -2,13 +2,13 @@ use gpui::{
     div, prelude::*, px, rgb, uniform_list, Context, Entity, IntoElement, MouseButton, Render,
     ScrollStrategy, UniformListScrollHandle, Window,
 };
-use gstreamer::prelude::ObjectExt;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::search_input::{self, SearchInput};
 use crate::select::{Select, SelectEvent, SelectItem, SelectState};
 use crate::subtitle_detector::SubtitleStream;
 use crate::subtitle_extractor::SubtitleEntry;
+use crate::video_player::ClockTime;
 use crate::AppState;
 
 // Implement SelectItem for SubtitleStream
@@ -33,7 +33,63 @@ pub struct SubtitleWindow {
     last_scrolled_to_video: Option<usize>,  // Last video position we scrolled to
 }
 
+// Data structure to hold loaded subtitle information
+pub struct SubtitleData {
+    pub streams: Vec<SubtitleStream>,
+    pub first_stream_entries: Vec<SubtitleEntry>,
+}
+
 impl SubtitleWindow {
+    /// Load subtitle data on a background thread (safe to call from non-UI thread)
+    /// Returns the streams and parsed entries for the first stream
+    pub fn load_subtitle_data_blocking(file_path: &str) -> Option<SubtitleData> {
+        // Detect subtitle streams (blocking ffprobe call)
+        let streams = crate::subtitle_detector::detect_subtitle_streams(file_path);
+
+        if streams.is_empty() {
+            println!("No text-based subtitle streams found");
+            return None;
+        }
+
+        println!("Found {} subtitle stream(s)", streams.len());
+
+        // Extract and parse the first stream (blocking ffmpeg call)
+        let first_stream_entries =
+            match crate::subtitle_extractor::extract_subtitle_stream(file_path, 0) {
+                Ok(srt_content) => {
+                    let entries = crate::subtitle_extractor::parse_srt(&srt_content);
+                    println!("Loaded {} subtitle entries", entries.len());
+                    entries
+                }
+                Err(e) => {
+                    eprintln!("Failed to extract subtitle stream: {}", e);
+                    Vec::new()
+                }
+            };
+
+        Some(SubtitleData {
+            streams,
+            first_stream_entries,
+        })
+    }
+
+    /// Update the subtitle window with pre-loaded data (must be called on UI thread)
+    pub fn update_with_loaded_data(&mut self, data: SubtitleData, cx: &mut Context<Self>) {
+        // Update select state with streams
+        self.select_state.update(cx, |state, cx| {
+            state.set_items(data.streams.clone(), cx);
+            // Select the first stream by default
+            if !data.streams.is_empty() {
+                state.set_selected_index(Some(0), cx);
+            }
+        });
+
+        // Set the subtitle entries
+        self.subtitle_entries = data.first_stream_entries;
+
+        cx.notify();
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         // Create select state with empty items initially
         let select_state = cx.new(|_cx| SelectState::new(Vec::new()));
@@ -52,21 +108,13 @@ impl SubtitleWindow {
             let app_state = cx.global::<AppState>();
             let video_player = app_state.video_player.clone();
 
-            // Get pipeline reference while holding lock, then release lock before
-            // calling GStreamer operations to prevent indefinite hangs
-            let pipeline = if let Ok(player) = video_player.lock() {
-                player.get_pipeline()
+            if let Ok(player) = video_player.lock() {
+                if let Err(e) = player.set_subtitle_track(*index as i32) {
+                    eprintln!("Failed to set subtitle track: {}", e);
+                }
             } else {
-                None
+                eprintln!("Failed to lock video player for subtitle track change");
             };
-            // Lock is now dropped - safe to call blocking GStreamer operations
-
-            if let Some(pipeline) = pipeline {
-                println!("VideoPlayer: Setting subtitle track to {}", *index);
-                pipeline.set_property("current-text", *index as i32);
-            } else {
-                eprintln!("Failed to get pipeline for subtitle track change");
-            }
         })
         .detach();
 
@@ -154,7 +202,7 @@ impl SubtitleWindow {
                     self.current_subtitle_index = None;
                 }
             }
-        }
+        };
     }
 
     /// Find the subtitle entry that corresponds to the given time (in seconds)
@@ -343,8 +391,7 @@ impl Render for SubtitleWindow {
                             .items_center()
                             .child(
                                 // Checkbox for syncing to video
-                                Checkbox::new(&self.sync_subtitles_to_video)
-                                    .label("Synced to video"),
+                                Checkbox::new(&self.sync_subtitles_to_video).label("Sync"),
                             )
                             .child(
                                 // Select dropdown at half width
@@ -410,7 +457,6 @@ impl Render for SubtitleWindow {
                                             let video_player = app_state.video_player.clone();
 
                                             if let Ok(player) = video_player.lock() {
-                                                use gstreamer::ClockTime;
                                                 // Convert milliseconds to nanoseconds
                                                 let nanos = start_ms * 1_000_000;
                                                 let clock_time = ClockTime::from_nseconds(nanos);
@@ -423,7 +469,7 @@ impl Render for SubtitleWindow {
                                                 if let Err(e) = player.seek(clock_time) {
                                                     eprintln!("Failed to seek: {}", e);
                                                 }
-                                            }
+                                            };
                                         })
                                         .child(
                                             div()

@@ -1,10 +1,10 @@
 use gpui::{
     div, prelude::*, px, rgb, Context, Entity, IntoElement, MouseButton, Render, Window,
 };
-use gstreamer::prelude::ObjectExt;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::slider::{Slider, SliderEvent, SliderState, SliderValue};
+use crate::video_player::ClockTime;
 use crate::AppState;
 
 /// Controls window with play/pause/stop buttons and video scrubber
@@ -39,13 +39,12 @@ impl ControlsWindow {
             let video_player = app_state.video_player.clone();
 
             if let Ok(player) = video_player.lock() {
-                use gstreamer::ClockTime;
                 let nanos = (position_secs * 1_000_000_000.0) as u64;
                 let clock_time = ClockTime::from_nseconds(nanos);
                 if let Err(e) = player.seek(clock_time) {
                     eprintln!("Failed to seek: {}", e);
                 }
-            }
+            };
         })
         .detach();
 
@@ -61,30 +60,13 @@ impl ControlsWindow {
                 let video_player = app_state.video_player.clone();
                 let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
 
-                // Get pipeline reference while holding lock, then release lock before
-                // calling GStreamer operations to prevent indefinite hangs
-                let pipeline = if let Ok(player) = video_player.lock() {
-                    player.get_pipeline()
-                } else {
-                    None
-                };
-                // Lock is now dropped - safe to call blocking GStreamer operations
-
-                if let Some(pipeline) = pipeline {
-                    if *checked {
-                        if let Some(track) = selected_track {
-                            println!("VideoPlayer: Enabling subtitle display with track {}", track);
-                            pipeline.set_property("current-text", track);
-                        } else {
-                            eprintln!("VideoPlayer: Cannot enable subtitles - no track specified");
-                        }
-                    } else {
-                        println!("VideoPlayer: Disabling subtitle display");
-                        pipeline.set_property("current-text", -1);
+                if let Ok(player) = video_player.lock() {
+                    if let Err(e) = player.set_subtitle_display(*checked, selected_track) {
+                        eprintln!("Failed to set subtitle display: {}", e);
                     }
                 } else {
-                    eprintln!("Failed to get pipeline for subtitle display toggle");
-                }
+                    eprintln!("Failed to lock video player for subtitle display toggle");
+                };
             },
         )
         .detach();
@@ -112,7 +94,7 @@ impl ControlsWindow {
                 self.duration = duration.nseconds() as f32 / 1_000_000_000.0;
             }
             self.is_playing = player.is_playing();
-        }
+        };
     }
 
     fn format_time(seconds: f32) -> String {
@@ -478,7 +460,7 @@ impl Render for ControlsWindow {
                                                 eprintln!("Failed to play: {}", e);
                                             }
                                         }
-                                    }
+                                    };
                                 }),
                             )
                             .child(if self.is_playing { "Pause" } else { "Play" }),
