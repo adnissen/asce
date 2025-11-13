@@ -17,6 +17,7 @@ use gpui::{
     ScrollStrategy, SystemMenuType, UniformListScrollHandle, Window, WindowOptions, actions, div,
     prelude::*, px, rgb, uniform_list,
 };
+use gstreamer::prelude::ObjectExt;
 use raw_window_handle::RawWindowHandle;
 use search_input::SearchInput;
 use select::{Select, SelectEvent, SelectItem, SelectState};
@@ -147,10 +148,21 @@ impl SubtitleWindow {
             // If subtitle display is enabled in controls, update the video player
             let app_state = cx.global::<AppState>();
             let video_player = app_state.video_player.clone();
-            if let Ok(player) = video_player.lock() {
-                if let Err(e) = player.set_subtitle_track(*index as i32) {
-                    eprintln!("Failed to set subtitle track: {}", e);
-                }
+
+            // Get pipeline reference while holding lock, then release lock before
+            // calling GStreamer operations to prevent indefinite hangs
+            let pipeline = if let Ok(player) = video_player.lock() {
+                player.get_pipeline()
+            } else {
+                None
+            };
+            // Lock is now dropped - safe to call blocking GStreamer operations
+
+            if let Some(pipeline) = pipeline {
+                println!("VideoPlayer: Setting subtitle track to {}", *index);
+                pipeline.set_property("current-text", *index as i32);
+            } else {
+                eprintln!("Failed to get pipeline for subtitle track change");
             }
         })
         .detach();
@@ -598,11 +610,29 @@ impl ControlsWindow {
                 let video_player = app_state.video_player.clone();
                 let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
 
-                if let Ok(player) = video_player.lock() {
-                    // Enable or disable subtitle display
-                    if let Err(e) = player.set_subtitle_display(*checked, selected_track) {
-                        eprintln!("Failed to set subtitle display: {}", e);
+                // Get pipeline reference while holding lock, then release lock before
+                // calling GStreamer operations to prevent indefinite hangs
+                let pipeline = if let Ok(player) = video_player.lock() {
+                    player.get_pipeline()
+                } else {
+                    None
+                };
+                // Lock is now dropped - safe to call blocking GStreamer operations
+
+                if let Some(pipeline) = pipeline {
+                    if *checked {
+                        if let Some(track) = selected_track {
+                            println!("VideoPlayer: Enabling subtitle display with track {}", track);
+                            pipeline.set_property("current-text", track);
+                        } else {
+                            eprintln!("VideoPlayer: Cannot enable subtitles - no track specified");
+                        }
+                    } else {
+                        println!("VideoPlayer: Disabling subtitle display");
+                        pipeline.set_property("current-text", -1);
                     }
+                } else {
+                    eprintln!("Failed to get pipeline for subtitle display toggle");
                 }
             },
         )

@@ -324,7 +324,19 @@ impl VideoPlayer {
         }
     }
 
+    /// Get a clone of the pipeline reference
+    ///
+    /// This allows callers to release locks before performing potentially blocking
+    /// GStreamer operations. Returns None if no pipeline is loaded.
+    pub fn get_pipeline(&self) -> Option<gst::Element> {
+        self.pipeline.clone()
+    }
+
     /// Set the current subtitle track to display
+    ///
+    /// WARNING: This method can block during subtitle stream reconfiguration.
+    /// Callers holding mutex locks should use get_pipeline() instead to get the
+    /// pipeline reference, drop the lock, then call set_property directly.
     pub fn set_subtitle_track(&self, track_index: i32) -> Result<(), VideoPlayerError> {
         if let Some(ref pipeline) = self.pipeline {
             println!("VideoPlayer: Setting subtitle track to {}", track_index);
