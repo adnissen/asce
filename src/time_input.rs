@@ -1,9 +1,11 @@
 use gpui::{
-    div, prelude::*, rgb, App, Bounds, Context, CursorStyle, Element, ElementId,
+    actions, div, prelude::*, rgb, App, Bounds, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId,
     LayoutId, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window,
 };
 use std::ops::Range;
+
+actions!(time_input, [Backspace]);
 
 pub struct TimeInput {
     focus_handle: FocusHandle,
@@ -78,6 +80,13 @@ impl TimeInput {
     /// Check if the current content is valid time format
     pub fn is_valid(&self) -> bool {
         self.content.is_empty() || self.parse_time_ms().is_some()
+    }
+
+    fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
+        let mut content = self.content.to_string();
+        content.pop();
+        self.content = content.into();
+        cx.notify();
     }
 }
 
@@ -301,6 +310,8 @@ impl Element for TimeInputElement {
         cx: &mut App,
     ) {
         let focus_handle = self.input.read(cx).focus_handle.clone();
+        let is_focused = focus_handle.is_focused(window);
+
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
@@ -308,8 +319,28 @@ impl Element for TimeInputElement {
         );
 
         let line = prepaint.line.take().unwrap();
+        let text_width = line.width;
         line.paint(bounds.origin, window.line_height(), window, cx)
             .unwrap();
+
+        // Paint cursor when focused
+        if is_focused {
+            let cursor_x = bounds.origin.x + text_width;
+            let cursor_top = bounds.origin.y;
+            let cursor_bottom = cursor_top + window.line_height();
+
+            window.paint_quad(gpui::quad(
+                gpui::Bounds {
+                    origin: gpui::point(cursor_x, cursor_top),
+                    size: gpui::size(gpui::px(1.5), cursor_bottom - cursor_top),
+                },
+                gpui::Corners::default(),
+                gpui::white(),
+                gpui::Edges::default(),
+                gpui::white(),
+                gpui::BorderStyle::default(),
+            ));
+        }
 
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
@@ -340,7 +371,9 @@ impl Render for TimeInput {
             .text_xs()
             .text_color(rgb(0xffffff))
             .cursor(CursorStyle::IBeam)
+            .key_context("TimeInput")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::backspace))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                 window.focus(&this.focus_handle);
                 cx.notify();

@@ -55,6 +55,11 @@ fn main() {
             gpui::KeyBinding::new("backspace", search_input::Backspace, Some("SearchInput")),
         ]);
 
+        // Bind keys for time input
+        cx.bind_keys([
+            gpui::KeyBinding::new("backspace", time_input::Backspace, Some("TimeInput")),
+        ]);
+
         // Add menu items
         set_app_menus(cx);
 
