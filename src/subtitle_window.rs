@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, uniform_list, Context, Entity, IntoElement, MouseButton, Render,
-    ScrollStrategy, UniformListScrollHandle, Window, Point, Pixels,
+    div, prelude::*, px, rgb, uniform_list, Context, Entity, IntoElement, MouseButton, Pixels,
+    Point, Render, ScrollStrategy, UniformListScrollHandle, Window,
 };
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
@@ -604,7 +604,14 @@ impl Render for SubtitleWindow {
                             .text_sm()
                             .text_color(rgb(0xffffff))
                             .hover(|style| style.bg(rgb(0x404040)))
+                            // Consume right-click events on the menu item itself
+                            .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                                println!("Menu item right-clicked (event consumed)");
+                                // Consume the event
+                                cx.stop_propagation();
+                            })
                             .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
+                                cx.stop_propagation();
                                 println!("Clip block clicked! start_ms={}, end_ms={}", start_ms, end_ms);
 
                                 // Use defer to update state after this render cycle
