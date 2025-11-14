@@ -145,6 +145,62 @@ impl ControlsWindow {
         cx.notify();
     }
 
+    /// Set only the clip start time from milliseconds
+    pub fn set_clip_start(&mut self, start_ms: u64, cx: &mut Context<Self>) {
+        let start_ms_f32 = start_ms as f32;
+
+        // Check if this would violate the constraint (start >= end)
+        if let Some(end) = self.clip_end {
+            if start_ms_f32 >= end {
+                // Unset clip_end if start would be after or equal to it
+                self.clip_end = None;
+                self.clip_end_input.update(cx, |input, cx| {
+                    input.set_content("".to_string(), cx);
+                });
+            }
+        }
+
+        // Set the clip start
+        self.clip_start = Some(start_ms_f32);
+
+        // Update the input field
+        let start_formatted = Self::format_time_ms(start_ms_f32);
+
+        self.clip_start_input.update(cx, |input, cx| {
+            input.set_content(start_formatted, cx);
+        });
+
+        cx.notify();
+    }
+
+    /// Set only the clip end time from milliseconds
+    pub fn set_clip_end(&mut self, end_ms: u64, cx: &mut Context<Self>) {
+        let end_ms_f32 = end_ms as f32;
+
+        // Check if this would violate the constraint (end <= start)
+        if let Some(start) = self.clip_start {
+            if end_ms_f32 <= start {
+                // Unset clip_start if end would be before or equal to it
+                self.clip_start = None;
+                self.clip_start_input.update(cx, |input, cx| {
+                    input.set_content("".to_string(), cx);
+                });
+            }
+        }
+
+        // Set the clip end
+        self.clip_end = Some(end_ms_f32);
+
+        // Update the input field
+        let end_formatted = Self::format_time_ms(end_ms_f32);
+
+        self.clip_end_input.update(cx, |input, cx| {
+            input.set_content(end_formatted, cx);
+        });
+
+        cx.notify();
+    }
+
     fn handle_export_click(&mut self, cx: &mut Context<Self>) {
         // Try to get times from input fields first, fall back to stored values
         let clip_start_ms = self
@@ -259,6 +315,10 @@ impl Render for ControlsWindow {
             if t.is_playing_clip {
                 if let Some(end_time_ms) = t.clip_playback_end {
                     let current_time_ms = t.current_position * 1000.0;
+                    println!(
+                        "Current time: {}, End time: {}",
+                        current_time_ms, end_time_ms
+                    );
                     if current_time_ms >= end_time_ms {
                         // Stop clip playback
                         t.is_playing_clip = false;
@@ -268,6 +328,7 @@ impl Render for ControlsWindow {
                         let app_state = cx.global::<AppState>();
                         let video_player = app_state.video_player.clone();
                         if let Ok(player) = video_player.lock() {
+                            println!("Pausing because of the clip playback end check");
                             if let Err(e) = player.pause() {
                                 eprintln!("Failed to pause after clip playback: {}", e);
                             }
@@ -657,15 +718,20 @@ impl Render for ControlsWindow {
                                                 if start < end {
                                                     // Seek to start and play
                                                     let app_state = cx.global::<AppState>();
-                                                    let video_player = app_state.video_player.clone();
+                                                    let video_player =
+                                                        app_state.video_player.clone();
 
                                                     if let Ok(player) = video_player.lock() {
                                                         // Convert milliseconds to nanoseconds for seeking
                                                         let nanos = (start * 1_000_000.0) as u64;
-                                                        let clock_time = ClockTime::from_nseconds(nanos);
+                                                        let clock_time =
+                                                            ClockTime::from_nseconds(nanos);
 
                                                         if let Err(e) = player.seek(clock_time) {
-                                                            eprintln!("Failed to seek to clip start: {}", e);
+                                                            eprintln!(
+                                                                "Failed to seek to clip start: {}",
+                                                                e
+                                                            );
                                                         } else if let Err(e) = player.play() {
                                                             eprintln!("Failed to play clip: {}", e);
                                                         } else {

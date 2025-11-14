@@ -34,10 +34,19 @@ pub struct SubtitleWindow {
     pub context_menu: Option<ContextMenuState>, // Right-click context menu state (public so unified window can close it)
 }
 
+/// Type of context menu to display
+#[derive(Clone, Copy, PartialEq)]
+pub enum ContextMenuType {
+    SubtitleEntry,  // Right-click on subtitle entry
+    StartTime,      // Right-click on start timestamp
+    EndTime,        // Right-click on end timestamp
+}
+
 /// State for the right-click context menu
 pub struct ContextMenuState {
     pub position: Point<Pixels>,
     pub subtitle_index: usize,
+    pub menu_type: ContextMenuType,
 }
 
 // Data structure to hold loaded subtitle information
@@ -444,7 +453,6 @@ impl Render for SubtitleWindow {
                                         .border_b_1()
                                         .border_color(rgb(0x333333))
                                         .cursor_pointer()
-                                        .hover(|style| style.bg(rgb(0x404040)))
                                         // Prioritize active search result > current video subtitle > regular search result
                                         .when(is_active_search_result, |div| {
                                             div.bg(rgb(0xffa726)) // Bright orange for active search result
@@ -521,6 +529,7 @@ impl Render for SubtitleWindow {
                                                                     subtitles.context_menu = Some(ContextMenuState {
                                                                         position: relative_position,
                                                                         subtitle_index: idx,
+                                                                        menu_type: ContextMenuType::SubtitleEntry,
                                                                     });
                                                                     cx.notify();
                                                                     println!("Context menu state set and notified");
@@ -546,13 +555,114 @@ impl Render for SubtitleWindow {
                                                 .gap_1()
                                                 .child(
                                                     div()
+                                                        .flex()
+                                                        .flex_row()
+                                                        .gap_1()
                                                         .text_xs()
                                                         .text_color(rgb(0x888888))
-                                                        .child(format!(
-                                                            "{} --> {}",
-                                                            entry.format_start_time(),
-                                                            entry.format_end_time()
-                                                        )),
+                                                        .child(
+                                                            div()
+                                                                .px_1()
+                                                                .rounded(px(3.0))
+                                                                .cursor_pointer()
+                                                                .hover(|style| {
+                                                                    style
+                                                                        .bg(rgb(0x0069bd))
+                                                                })
+                                                                .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                                                                    // Show context menu for start time
+                                                                    println!("Right-click detected on start timestamp {}", idx);
+                                                                    let position = event.position;
+
+                                                                    // Get window bounds to calculate subtitle window offset
+                                                                    let window_bounds = window.bounds();
+                                                                    let video_width = window_bounds.size.width * 0.76;
+
+                                                                    // Convert to subtitle-window-relative coordinates
+                                                                    let relative_x = position.x - video_width;
+                                                                    let relative_y = position.y;
+
+                                                                    let relative_position = Point {
+                                                                        x: relative_x,
+                                                                        y: relative_y,
+                                                                    };
+
+                                                                    cx.defer(move |cx| {
+                                                                        let app_state = cx.global::<AppState>();
+                                                                        let unified_window = app_state.unified_window();
+
+                                                                        if let Some(window_handle) = unified_window {
+                                                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
+                                                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
+                                                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
+                                                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
+                                                                                        subtitles.context_menu = Some(ContextMenuState {
+                                                                                            position: relative_position,
+                                                                                            subtitle_index: idx,
+                                                                                            menu_type: ContextMenuType::StartTime,
+                                                                                        });
+                                                                                        cx.notify();
+                                                                                    });
+                                                                                }
+                                                                            });
+                                                                        }
+                                                                    });
+                                                                    cx.stop_propagation();
+                                                                })
+                                                                .child(entry.format_start_time())
+                                                        )
+                                                        .child(" --> ")
+                                                        .child(
+                                                            div()
+                                                                .px_1()
+                                                                .rounded(px(3.0))
+                                                                .cursor_pointer()
+                                                                .hover(|style| {
+                                                                    style
+                                                                        .bg(rgb(0x0069bd))
+                                                                })
+                                                                .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                                                                    // Show context menu for end time
+                                                                    println!("Right-click detected on end timestamp {}", idx);
+                                                                    let position = event.position;
+
+                                                                    // Get window bounds to calculate subtitle window offset
+                                                                    let window_bounds = window.bounds();
+                                                                    let video_width = window_bounds.size.width * 0.76;
+
+                                                                    // Convert to subtitle-window-relative coordinates
+                                                                    let relative_x = position.x - video_width;
+                                                                    let relative_y = position.y;
+
+                                                                    let relative_position = Point {
+                                                                        x: relative_x,
+                                                                        y: relative_y,
+                                                                    };
+
+                                                                    cx.defer(move |cx| {
+                                                                        let app_state = cx.global::<AppState>();
+                                                                        let unified_window = app_state.unified_window();
+
+                                                                        if let Some(window_handle) = unified_window {
+                                                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
+                                                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
+                                                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
+                                                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
+                                                                                        subtitles.context_menu = Some(ContextMenuState {
+                                                                                            position: relative_position,
+                                                                                            subtitle_index: idx,
+                                                                                            menu_type: ContextMenuType::EndTime,
+                                                                                        });
+                                                                                        cx.notify();
+                                                                                    });
+                                                                                }
+                                                                            });
+                                                                        }
+                                                                    });
+                                                                    cx.stop_propagation();
+                                                                })
+                                                                .child(entry.format_end_time())
+                                                        )
                                                 )
                                                 .child(
                                                     div()
@@ -576,8 +686,9 @@ impl Render for SubtitleWindow {
                 let entry = &self.subtitle_entries[subtitle_index];
                 let start_ms = entry.start_ms;
                 let end_ms = entry.end_ms;
+                let menu_type = menu_state.menu_type;
 
-                div()
+                let mut menu = div()
                     .absolute()
                     .left(menu_state.position.x)
                     .top(menu_state.position.y)
@@ -595,68 +706,191 @@ impl Render for SubtitleWindow {
                     .on_mouse_down(MouseButton::Right, |_, _, _| {
                         println!("Context menu div right-clicked (event consumed)");
                         // Consume the event
-                    })
-                    .child(
-                        div()
-                            .px_4()
-                            .py_2()
-                            .cursor_pointer()
-                            .text_sm()
-                            .text_color(rgb(0xffffff))
-                            .hover(|style| style.bg(rgb(0x404040)))
-                            // Consume right-click events on the menu item itself
-                            .on_mouse_down(MouseButton::Right, |_, _, cx| {
-                                println!("Menu item right-clicked (event consumed)");
-                                // Consume the event
-                                cx.stop_propagation();
-                            })
-                            .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
-                                cx.stop_propagation();
-                                println!("Clip block clicked! start_ms={}, end_ms={}", start_ms, end_ms);
+                    });
 
-                                // Use defer to update state after this render cycle
-                                cx.defer(move |cx| {
-                                    println!("In deferred callback for clip setting");
-                                    // Set clip start and end times in the controls window
-                                    let app_state = cx.global::<AppState>();
-                                    let unified_window = app_state.unified_window();
+                // Add menu items based on menu type
+                match menu_type {
+                    ContextMenuType::StartTime | ContextMenuType::EndTime => {
+                        // For timestamps: show all three options
+                        // Determine which timestamp was clicked to use the correct value
+                        let clicked_time_ms = match menu_type {
+                            ContextMenuType::StartTime => start_ms,
+                            ContextMenuType::EndTime => end_ms,
+                            _ => start_ms, // unreachable
+                        };
 
-                                    if let Some(window_handle) = unified_window {
-                                        println!("Got unified window handle for clip setting");
-                                        let update_result = window_handle.update(cx, |any_view, _, app_cx| {
-                                            match any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                Ok(unified_window) => {
-                                                    println!("Successfully downcast to UnifiedWindow for clip setting");
+                        // Add "Set clip start" option - uses the clicked timestamp
+                        menu = menu.child(
+                            div()
+                                .px_4()
+                                .py_2()
+                                .cursor_pointer()
+                                .text_sm()
+                                .text_color(rgb(0xffffff))
+                                .hover(|style| style.bg(rgb(0x404040)))
+                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
+                                    cx.stop_propagation();
+                                    println!("Set clip start clicked! time_ms={}", clicked_time_ms);
+
+                                    cx.defer(move |cx| {
+                                        let app_state = cx.global::<AppState>();
+                                        let unified_window = app_state.unified_window();
+
+                                        if let Some(window_handle) = unified_window {
+                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
+                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
                                                     let controls_entity = unified_window.read(app_cx).controls.clone();
                                                     controls_entity.update(app_cx, |controls, cx| {
-                                                        println!("Calling set_clip_times with start={}, end={}", start_ms, end_ms);
-                                                        controls.set_clip_times(start_ms, end_ms, cx);
-                                                        println!("set_clip_times completed");
+                                                        controls.set_clip_start(clicked_time_ms, cx);
                                                     });
 
                                                     // Close the context menu
                                                     let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
                                                     subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                        println!("Closing context menu after clip block click");
                                                         subtitles.context_menu = None;
                                                         cx.notify();
                                                     });
                                                 }
-                                                Err(e) => {
-                                                    println!("Failed to downcast for clip setting: {:?}", e);
-                                                }
-                                            }
-                                        });
-                                        if let Err(e) = update_result {
-                                            println!("Failed to update window for clip setting: {:?}", e);
+                                            });
                                         }
-                                    } else {
-                                        println!("No unified window handle available for clip setting");
-                                    }
-                                });
-                            })
-                            .child("Clip block")
-                    )
+                                    });
+                                })
+                                .child("Set clip start")
+                        );
+
+                        // Add "Set clip end" option - uses the clicked timestamp
+                        menu = menu.child(
+                            div()
+                                .px_4()
+                                .py_2()
+                                .cursor_pointer()
+                                .text_sm()
+                                .text_color(rgb(0xffffff))
+                                .hover(|style| style.bg(rgb(0x404040)))
+                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
+                                    cx.stop_propagation();
+                                    println!("Set clip end clicked! time_ms={}", clicked_time_ms);
+
+                                    cx.defer(move |cx| {
+                                        let app_state = cx.global::<AppState>();
+                                        let unified_window = app_state.unified_window();
+
+                                        if let Some(window_handle) = unified_window {
+                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
+                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
+                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
+                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                        controls.set_clip_end(clicked_time_ms, cx);
+                                                    });
+
+                                                    // Close the context menu
+                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
+                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
+                                                        subtitles.context_menu = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    });
+                                })
+                                .child("Set clip end")
+                        );
+
+                        // Add "Clip block" option
+                        menu = menu.child(
+                            div()
+                                .px_4()
+                                .py_2()
+                                .cursor_pointer()
+                                .text_sm()
+                                .text_color(rgb(0xffffff))
+                                .hover(|style| style.bg(rgb(0x404040)))
+                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
+                                    cx.stop_propagation();
+                                    println!("Clip block clicked! start_ms={}, end_ms={}", start_ms, end_ms);
+
+                                    cx.defer(move |cx| {
+                                        let app_state = cx.global::<AppState>();
+                                        let unified_window = app_state.unified_window();
+
+                                        if let Some(window_handle) = unified_window {
+                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
+                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
+                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
+                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                        controls.set_clip_times(start_ms, end_ms, cx);
+                                                    });
+
+                                                    // Close the context menu
+                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
+                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
+                                                        subtitles.context_menu = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    });
+                                })
+                                .child("Clip block")
+                        );
+                    }
+                    ContextMenuType::SubtitleEntry => {
+                        // For subtitle entry (non-timestamp): show only "Clip block"
+                        menu = menu.child(
+                            div()
+                                .px_4()
+                                .py_2()
+                                .cursor_pointer()
+                                .text_sm()
+                                .text_color(rgb(0xffffff))
+                                .hover(|style| style.bg(rgb(0x404040)))
+                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
+                                    cx.stop_propagation();
+                                    println!("Clip block clicked! start_ms={}, end_ms={}", start_ms, end_ms);
+
+                                    cx.defer(move |cx| {
+                                        let app_state = cx.global::<AppState>();
+                                        let unified_window = app_state.unified_window();
+
+                                        if let Some(window_handle) = unified_window {
+                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
+                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
+                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
+                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                        controls.set_clip_times(start_ms, end_ms, cx);
+                                                    });
+
+                                                    // Close the context menu
+                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
+                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
+                                                        subtitles.context_menu = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    });
+                                })
+                                .child("Clip block")
+                        );
+                    }
+                }
+
+                menu
             }))
             // Click anywhere to close context menu (except on the menu itself)
             .when(self.context_menu.is_some(), |div| {
