@@ -18,6 +18,8 @@ pub struct ControlsWindow {
     clip_start: Option<f32>, // stored in milliseconds
     clip_end: Option<f32>,   // stored in milliseconds
     is_exporting: bool,
+    is_playing_clip: bool,
+    clip_playback_end: Option<f32>, // milliseconds - when to stop during clip playback
 }
 
 impl ControlsWindow {
@@ -84,6 +86,8 @@ impl ControlsWindow {
             clip_start: None,
             clip_end: None,
             is_exporting: false,
+            is_playing_clip: false,
+            clip_playback_end: None,
         }
     }
 
@@ -226,6 +230,27 @@ impl Render for ControlsWindow {
         cx.on_next_frame(window, |t, _window, cx| {
             // Update from video player and request next frame
             t.update_position_from_player(cx);
+
+            // Check if we need to pause during clip playback
+            if t.is_playing_clip {
+                if let Some(end_time_ms) = t.clip_playback_end {
+                    let current_time_ms = t.current_position * 1000.0;
+                    if current_time_ms >= end_time_ms {
+                        // Stop clip playback
+                        t.is_playing_clip = false;
+                        t.clip_playback_end = None;
+
+                        // Pause the player
+                        let app_state = cx.global::<AppState>();
+                        let video_player = app_state.video_player.clone();
+                        if let Ok(player) = video_player.lock() {
+                            if let Err(e) = player.pause() {
+                                eprintln!("Failed to pause after clip playback: {}", e);
+                            }
+                        };
+                    }
+                }
+            }
 
             // Request another render on next frame to create continuous updates
             cx.notify();
@@ -526,35 +551,111 @@ impl Render for ControlsWindow {
                                     }),
                             ), // Display total clip length and export button (always visible, greyed out if invalid)
                     )
-                    // Center: Play/pause button
+                    // Center: Play/pause and Play Clip buttons
                     .child(
                         div()
-                            .px_6()
-                            .py_3()
-                            .bg(rgb(0x404040))
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_color(rgb(0xffffff))
-                            .hover(|style| style.bg(rgb(0x505050)))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    let app_state = cx.global::<AppState>();
-                                    let video_player = app_state.video_player.clone();
-                                    if let Ok(player) = video_player.lock() {
-                                        if this.is_playing {
-                                            if let Err(e) = player.pause() {
-                                                eprintln!("Failed to pause: {}", e);
-                                            }
-                                        } else {
-                                            if let Err(e) = player.play() {
-                                                eprintln!("Failed to play: {}", e);
-                                            }
-                                        }
-                                    };
-                                }),
+                            .flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .px_6()
+                                    .py_3()
+                                    .bg(rgb(0x404040))
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .text_color(rgb(0xffffff))
+                                    .hover(|style| style.bg(rgb(0x505050)))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app_state = cx.global::<AppState>();
+                                            let video_player = app_state.video_player.clone();
+                                            if let Ok(player) = video_player.lock() {
+                                                if this.is_playing {
+                                                    if let Err(e) = player.pause() {
+                                                        eprintln!("Failed to pause: {}", e);
+                                                    }
+                                                } else {
+                                                    if let Err(e) = player.play() {
+                                                        eprintln!("Failed to play: {}", e);
+                                                    }
+                                                }
+                                            };
+                                        }),
+                                    )
+                                    .child(if self.is_playing { "Pause" } else { "Play" }),
                             )
-                            .child(if self.is_playing { "Pause" } else { "Play" }),
+                            .child({
+                                let start_ms = self
+                                    .clip_start_input
+                                    .read(cx)
+                                    .parse_time_ms()
+                                    .or(self.clip_start);
+                                let end_ms = self
+                                    .clip_end_input
+                                    .read(cx)
+                                    .parse_time_ms()
+                                    .or(self.clip_end);
+                                let is_valid = start_ms.is_some()
+                                    && end_ms.is_some()
+                                    && start_ms.unwrap() < end_ms.unwrap();
+
+                                div()
+                                    .px_6()
+                                    .py_3()
+                                    .rounded_md()
+                                    .when(is_valid, |this| {
+                                        this.bg(rgb(0x2e7d32))
+                                            .cursor_pointer()
+                                            .text_color(rgb(0xffffff))
+                                            .hover(|style| style.bg(rgb(0x388e3c)))
+                                    })
+                                    .when(!is_valid, |this| {
+                                        this.bg(rgb(0x404040))
+                                            .cursor_not_allowed()
+                                            .text_color(rgb(0x666666))
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            let start_ms = this
+                                                .clip_start_input
+                                                .read(cx)
+                                                .parse_time_ms()
+                                                .or(this.clip_start);
+                                            let end_ms = this
+                                                .clip_end_input
+                                                .read(cx)
+                                                .parse_time_ms()
+                                                .or(this.clip_end);
+
+                                            if let (Some(start), Some(end)) = (start_ms, end_ms) {
+                                                if start < end {
+                                                    // Seek to start and play
+                                                    let app_state = cx.global::<AppState>();
+                                                    let video_player = app_state.video_player.clone();
+
+                                                    if let Ok(player) = video_player.lock() {
+                                                        // Convert milliseconds to nanoseconds for seeking
+                                                        let nanos = (start * 1_000_000.0) as u64;
+                                                        let clock_time = ClockTime::from_nseconds(nanos);
+
+                                                        if let Err(e) = player.seek(clock_time) {
+                                                            eprintln!("Failed to seek to clip start: {}", e);
+                                                        } else if let Err(e) = player.play() {
+                                                            eprintln!("Failed to play clip: {}", e);
+                                                        } else {
+                                                            // Set up clip playback mode
+                                                            this.is_playing_clip = true;
+                                                            this.clip_playback_end = Some(end);
+                                                        }
+                                                    };
+                                                }
+                                            }
+                                        }),
+                                    )
+                                    .child("Play Clip")
+                            }),
                     )
                     // Right side: Display subtitles checkbox
                     .child(
