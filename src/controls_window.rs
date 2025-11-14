@@ -20,6 +20,7 @@ pub struct ControlsWindow {
     is_exporting: bool,
     is_playing_clip: bool,
     clip_playback_end: Option<f32>, // milliseconds - when to stop during clip playback
+    last_seek_time: Option<f32>,    // milliseconds - video time when user clicked "Play Clip"
 }
 
 impl ControlsWindow {
@@ -88,6 +89,7 @@ impl ControlsWindow {
             is_exporting: false,
             is_playing_clip: false,
             clip_playback_end: None,
+            last_seek_time: None,
         }
     }
 
@@ -315,11 +317,21 @@ impl Render for ControlsWindow {
             if t.is_playing_clip {
                 if let Some(end_time_ms) = t.clip_playback_end {
                     let current_time_ms = t.current_position * 1000.0;
-                    println!(
-                        "Current time: {}, End time: {}",
-                        current_time_ms, end_time_ms
-                    );
-                    if current_time_ms >= end_time_ms {
+                    // it takes a moment for the video player to actually update its position when we seek
+                    // this means that for a small amount of time, the current_time_ms might be
+                    // well ahead or behind or the actual position the user is seeking to.
+                    //
+                    // it appears to almost always (on this computer) be less than a millisecond or two,
+                    // but potentially more than one frame.
+                    //
+                    // to prevent automatically pausing when the user is trying to play a clip
+                    // (because for a moment we think we're past our desired pause point),
+                    // we store the time in milliseconds the user was AT when they hit the "play clip" button
+                    // if the video player is reporting it's still in the same millisecond or +/- 1 ms, don't auto pause
+                    let past_seek_time = t
+                        .last_seek_time
+                        .map_or(true, |seek_time| (current_time_ms - seek_time).abs() > 0.1);
+                    if past_seek_time && current_time_ms >= end_time_ms {
                         // Stop clip playback
                         t.is_playing_clip = false;
                         t.clip_playback_end = None;
@@ -738,6 +750,10 @@ impl Render for ControlsWindow {
                                                             // Set up clip playback mode
                                                             this.is_playing_clip = true;
                                                             this.clip_playback_end = Some(end);
+                                                            this.last_seek_time = Some(
+                                                                this.current_position
+                                                                    * (1000 as f32),
+                                                            );
                                                         }
                                                     };
                                                 }
