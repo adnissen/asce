@@ -1,6 +1,6 @@
 use gpui::{
     div, prelude::*, px, rgb, uniform_list, Context, Entity, IntoElement, MouseButton, Render,
-    ScrollStrategy, UniformListScrollHandle, Window,
+    ScrollStrategy, UniformListScrollHandle, Window, Point, Pixels,
 };
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
@@ -31,6 +31,13 @@ pub struct SubtitleWindow {
     current_search_result_index: Option<usize>, // Index within search_result_indices of the current result
     last_scrolled_to_search: Option<usize>, // Last search result we scrolled to (to avoid re-scrolling)
     last_scrolled_to_video: Option<usize>,  // Last video position we scrolled to
+    pub context_menu: Option<ContextMenuState>, // Right-click context menu state (public so unified window can close it)
+}
+
+/// State for the right-click context menu
+pub struct ContextMenuState {
+    pub position: Point<Pixels>,
+    pub subtitle_index: usize,
 }
 
 // Data structure to hold loaded subtitle information
@@ -155,6 +162,7 @@ impl SubtitleWindow {
             current_search_result_index: None,
             last_scrolled_to_search: None,
             last_scrolled_to_video: None,
+            context_menu: None,
         }
     }
 
@@ -374,6 +382,7 @@ impl Render for SubtitleWindow {
             .size_full()
             .p_4()
             .gap_4()
+            .relative() // Add relative positioning for absolute children
             .child(
                 // Controls section
                 div()
@@ -471,6 +480,65 @@ impl Render for SubtitleWindow {
                                                 }
                                             };
                                         })
+                                        .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                                            // Show context menu on right-click
+                                            println!("Right-click detected on subtitle entry {}", idx);
+                                            let position = event.position;
+                                            println!("Mouse position (window coords): {:?}", position);
+
+                                            // Get window bounds to calculate subtitle window offset
+                                            let window_bounds = window.bounds();
+                                            let video_width = window_bounds.size.width * 0.76;
+
+                                            // Convert to subtitle-window-relative coordinates
+                                            // Subtract the video width since subtitle window starts after video
+                                            let relative_x = position.x - video_width;
+                                            let relative_y = position.y;
+
+                                            println!("Relative position (subtitle window coords): x={}, y={}", relative_x, relative_y);
+
+                                            let relative_position = Point {
+                                                x: relative_x,
+                                                y: relative_y,
+                                            };
+
+                                            // Use defer to update state after this render cycle
+                                            cx.defer(move |cx| {
+                                                println!("In deferred callback");
+                                                let app_state = cx.global::<AppState>();
+                                                let unified_window = app_state.unified_window();
+
+                                                if let Some(window_handle) = unified_window {
+                                                    println!("Got unified window handle");
+                                                    let update_result = window_handle.update(cx, |any_view, _, app_cx| {
+                                                        println!("Inside window.update, attempting downcast");
+                                                        match any_view.downcast::<crate::unified_window::UnifiedWindow>() {
+                                                            Ok(unified_window) => {
+                                                                println!("Successfully downcast to UnifiedWindow");
+                                                                let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
+                                                                subtitles_entity.update(app_cx, |subtitles, cx| {
+                                                                    println!("Setting context menu state with relative position");
+                                                                    subtitles.context_menu = Some(ContextMenuState {
+                                                                        position: relative_position,
+                                                                        subtitle_index: idx,
+                                                                    });
+                                                                    cx.notify();
+                                                                    println!("Context menu state set and notified");
+                                                                });
+                                                            }
+                                                            Err(e) => {
+                                                                println!("Failed to downcast to UnifiedWindow: {:?}", e);
+                                                            }
+                                                        }
+                                                    });
+                                                    if let Err(e) = update_result {
+                                                        println!("Failed to update window handle: {:?}", e);
+                                                    }
+                                                } else {
+                                                    println!("No unified window handle available");
+                                                }
+                                            });
+                                        })
                                         .child(
                                             div()
                                                 .flex()
@@ -502,5 +570,99 @@ impl Render for SubtitleWindow {
                     .h_full(),
                 ),
             )
+            // Render context menu if active
+            .children(self.context_menu.as_ref().map(|menu_state| {
+                let subtitle_index = menu_state.subtitle_index;
+                let entry = &self.subtitle_entries[subtitle_index];
+                let start_ms = entry.start_ms;
+                let end_ms = entry.end_ms;
+
+                div()
+                    .absolute()
+                    .left(menu_state.position.x)
+                    .top(menu_state.position.y)
+                    .bg(rgb(0x2a2a2a))
+                    .border_1()
+                    .border_color(rgb(0x404040))
+                    .rounded_md()
+                    .shadow_lg()
+                    .min_w(px(140.0))
+                    // Capture mouse events to prevent them from bubbling to parent
+                    .on_mouse_down(MouseButton::Left, |_, _, _| {
+                        println!("Context menu div clicked (event consumed)");
+                        // Consume the event - don't close the menu
+                    })
+                    .on_mouse_down(MouseButton::Right, |_, _, _| {
+                        println!("Context menu div right-clicked (event consumed)");
+                        // Consume the event
+                    })
+                    .child(
+                        div()
+                            .px_4()
+                            .py_2()
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(rgb(0xffffff))
+                            .hover(|style| style.bg(rgb(0x404040)))
+                            .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
+                                println!("Clip block clicked! start_ms={}, end_ms={}", start_ms, end_ms);
+
+                                // Use defer to update state after this render cycle
+                                cx.defer(move |cx| {
+                                    println!("In deferred callback for clip setting");
+                                    // Set clip start and end times in the controls window
+                                    let app_state = cx.global::<AppState>();
+                                    let unified_window = app_state.unified_window();
+
+                                    if let Some(window_handle) = unified_window {
+                                        println!("Got unified window handle for clip setting");
+                                        let update_result = window_handle.update(cx, |any_view, _, app_cx| {
+                                            match any_view.downcast::<crate::unified_window::UnifiedWindow>() {
+                                                Ok(unified_window) => {
+                                                    println!("Successfully downcast to UnifiedWindow for clip setting");
+                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
+                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                        println!("Calling set_clip_times with start={}, end={}", start_ms, end_ms);
+                                                        controls.set_clip_times(start_ms, end_ms, cx);
+                                                        println!("set_clip_times completed");
+                                                    });
+
+                                                    // Close the context menu
+                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
+                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
+                                                        println!("Closing context menu after clip block click");
+                                                        subtitles.context_menu = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    println!("Failed to downcast for clip setting: {:?}", e);
+                                                }
+                                            }
+                                        });
+                                        if let Err(e) = update_result {
+                                            println!("Failed to update window for clip setting: {:?}", e);
+                                        }
+                                    } else {
+                                        println!("No unified window handle available for clip setting");
+                                    }
+                                });
+                            })
+                            .child("Clip block")
+                    )
+            }))
+            // Click anywhere to close context menu (except on the menu itself)
+            .when(self.context_menu.is_some(), |div| {
+                div.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                    println!("Closing context menu via background click");
+                    this.context_menu = None;
+                    cx.notify();
+                }))
+                .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| {
+                    println!("Closing context menu via right-click outside");
+                    this.context_menu = None;
+                    cx.notify();
+                }))
+            })
     }
 }

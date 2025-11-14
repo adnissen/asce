@@ -121,6 +121,30 @@ impl ControlsWindow {
         format!("{:02}:{:02}.{:03}", mins, secs, ms)
     }
 
+    /// Set clip start and end times from milliseconds (e.g., from subtitle blocks)
+    pub fn set_clip_times(&mut self, start_ms: u64, end_ms: u64, cx: &mut Context<Self>) {
+        let start_ms_f32 = start_ms as f32;
+        let end_ms_f32 = end_ms as f32;
+
+        // Set the clip start and end
+        self.clip_start = Some(start_ms_f32);
+        self.clip_end = Some(end_ms_f32);
+
+        // Update the input fields
+        let start_formatted = Self::format_time_ms(start_ms_f32);
+        let end_formatted = Self::format_time_ms(end_ms_f32);
+
+        self.clip_start_input.update(cx, |input, cx| {
+            input.set_content(start_formatted, cx);
+        });
+
+        self.clip_end_input.update(cx, |input, cx| {
+            input.set_content(end_formatted, cx);
+        });
+
+        cx.notify();
+    }
+
     fn handle_export_click(&mut self, cx: &mut Context<Self>) {
         // Try to get times from input fields first, fall back to stored values
         let clip_start_ms = self

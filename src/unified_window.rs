@@ -119,6 +119,27 @@ impl Render for UnifiedWindow {
             .flex_col()
             .bg(rgb(0x000000))
             .size_full()
+            // Close subtitle context menu on any click outside the subtitle window
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                // Check if subtitle window has an open context menu and close it
+                this.subtitles.update(cx, |subtitles, cx| {
+                    if subtitles.context_menu.is_some() {
+                        println!("Closing context menu from unified window click");
+                        subtitles.context_menu = None;
+                        cx.notify();
+                    }
+                });
+            }))
+            .on_mouse_down(gpui::MouseButton::Right, cx.listener(|this, _, _, cx| {
+                // Close context menu on right-click anywhere
+                this.subtitles.update(cx, |subtitles, cx| {
+                    if subtitles.context_menu.is_some() {
+                        println!("Closing context menu from unified window right-click");
+                        subtitles.context_menu = None;
+                        cx.notify();
+                    }
+                });
+            }))
             // Top section: video (left) and subtitles (right)
             .child(
                 div()

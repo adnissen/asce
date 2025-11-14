@@ -459,7 +459,8 @@ impl VideoPlayer {
                 let bounds: cocoa::foundation::NSRect = msg_send![view, bounds];
 
                 // Get the actual backing scale factor (handles both retina and non-retina)
-                let backing_bounds: cocoa::foundation::NSRect = msg_send![view, convertRectToBacking: bounds];
+                let backing_bounds: cocoa::foundation::NSRect =
+                    msg_send![view, convertRectToBacking: bounds];
                 let width = backing_bounds.size.width as i32;
                 let height = backing_bounds.size.height as i32;
 
