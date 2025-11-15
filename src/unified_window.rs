@@ -186,13 +186,11 @@ impl Render for UnifiedWindow {
                                                 None
                                             };
 
-                                            if let Some(mut buffer) = buffer_clone {
-                                                // Convert BGRA to RGBA by swapping red and blue channels
-                                                for chunk in buffer.chunks_exact_mut(4) {
-                                                    chunk.swap(0, 2); // Swap B and R
-                                                }
+                                            if let Some(buffer) = buffer_clone {
+                                                // Buffer is in BGRA format from OpenGL ReadPixels
+                                                // No channel swap needed - pass directly to RgbaImage
 
-                                                // Create image::Frame from raw RGBA bytes
+                                                // Create image::Frame from buffer
                                                 use image::{RgbaImage, Frame, Delay};
 
                                                 if let Some(rgba_image) = RgbaImage::from_raw(width, height, buffer) {
