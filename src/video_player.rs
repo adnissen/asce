@@ -7,12 +7,24 @@ use std::fmt;
 use std::os::raw::{c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+#[cfg(target_os = "macos")]
 use cocoa::appkit::{NSOpenGLContext, NSOpenGLPixelFormat};
+#[cfg(target_os = "macos")]
 use cocoa::base::{id, nil};
+#[cfg(target_os = "macos")]
 use cocoa::foundation::NSAutoreleasePool;
+
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::*;
+#[cfg(target_os = "windows")]
+use windows::Win32::Graphics::Gdi::*;
+#[cfg(target_os = "windows")]
+use windows::Win32::Graphics::OpenGL::*;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 // Include generated mpv bindings
 #[allow(non_upper_case_globals)]
@@ -40,11 +52,30 @@ struct SendMpvRenderContext(*mut mpv_render_context);
 unsafe impl Send for SendMpvRenderContext {}
 unsafe impl Sync for SendMpvRenderContext {}
 
-/// Wrapper for NSOpenGLContext that implements Send
+// Platform-specific OpenGL context wrappers
+
+/// Wrapper for NSOpenGLContext that implements Send (macOS)
 /// Safe because we only use it from the render thread
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy)]
 struct SendGLContext(id);
+#[cfg(target_os = "macos")]
 unsafe impl Send for SendGLContext {}
+#[cfg(target_os = "macos")]
+unsafe impl Sync for SendGLContext {}
+
+/// Wrapper for HWND and HGLRC that implements Send (Windows)
+/// Safe because we only use it from the render thread
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct SendGLContext {
+    hwnd: isize,
+    hdc: isize,
+    hglrc: isize,
+}
+#[cfg(target_os = "windows")]
+unsafe impl Send for SendGLContext {}
+#[cfg(target_os = "windows")]
 unsafe impl Sync for SendGLContext {}
 
 /// Errors that can occur during video playback
@@ -120,6 +151,12 @@ pub struct VideoPlayer {
     render_thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
     needs_render: Arc<AtomicBool>,
+    // FBO rendering support
+    fbo_id: Option<u32>,
+    texture_id: Option<u32>,
+    video_width: u32,
+    video_height: u32,
+    frame_buffer: Arc<Mutex<Vec<u8>>>,
 }
 
 impl VideoPlayer {
@@ -136,6 +173,11 @@ impl VideoPlayer {
             Self::set_option_string(handle, "idle", "yes"); // Keep mpv running
             Self::set_option_string(handle, "keep-open", "yes"); // Keep file open at end
 
+            // Default video dimensions (will be updated when window is set)
+            let video_width = 960;
+            let video_height = 540;
+            let buffer_size = (video_width * video_height * 4) as usize; // RGBA
+
             Self {
                 mpv_handle: SendMpvHandle(handle),
                 render_context: None,
@@ -145,6 +187,11 @@ impl VideoPlayer {
                 render_thread: None,
                 shutdown: Arc::new(AtomicBool::new(false)),
                 needs_render: Arc::new(AtomicBool::new(false)),
+                fbo_id: None,
+                texture_id: None,
+                video_width,
+                video_height,
+                frame_buffer: Arc::new(Mutex::new(vec![0u8; buffer_size])),
             }
         }
     }
@@ -269,7 +316,8 @@ impl VideoPlayer {
         }
     }
 
-    /// Set the native window handle and create OpenGL context
+    /// Set the native window handle and create OpenGL context (macOS)
+    #[cfg(target_os = "macos")]
     pub fn set_window_handle(&mut self, handle: usize) {
         unsafe {
             println!(
@@ -323,7 +371,273 @@ impl VideoPlayer {
 
             println!("VideoPlayer: OpenGL context created successfully");
 
+            // Load OpenGL function pointers
+            gl::load_with(|name| {
+                let name_c = CString::new(name).unwrap();
+                let symbol = core_foundation::string::CFString::new(name);
+                let framework = core_foundation::string::CFString::from_static_string("com.apple.opengl");
+                let bundle = core_foundation::bundle::CFBundleGetBundleWithIdentifier(framework.as_concrete_TypeRef());
+                if bundle.is_null() {
+                    return std::ptr::null();
+                }
+                core_foundation::bundle::CFBundleGetFunctionPointerForName(bundle, symbol.as_concrete_TypeRef()) as *const std::ffi::c_void
+            });
+
+            println!("VideoPlayer: OpenGL functions loaded");
+
+            // Create FBO and texture for off-screen rendering
+            self.create_fbo();
+
             // Don't create render context here - wait until mpv is initialized in load_file()
+        }
+    }
+
+    /// Set the native window handle and create OpenGL context (Windows)
+    #[cfg(target_os = "windows")]
+    pub fn set_window_handle(&mut self, handle: usize) {
+        unsafe {
+            let hwnd = HWND(handle as isize as *mut _);
+            println!("VideoPlayer: Setting up OpenGL 3.2 context for HWND: {:?}", hwnd);
+
+            // Get device context
+            let hdc = GetDC(Some(hwnd));
+            if hdc.0.is_null() {
+                eprintln!("Failed to get device context");
+                return;
+            }
+
+            // Set up pixel format descriptor
+            let pfd = PIXELFORMATDESCRIPTOR {
+                nSize: std::mem::size_of::<PIXELFORMATDESCRIPTOR>() as u16,
+                nVersion: 1,
+                dwFlags: PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+                iPixelType: PFD_TYPE_RGBA,
+                cColorBits: 32,
+                cRedBits: 0,
+                cRedShift: 0,
+                cGreenBits: 0,
+                cGreenShift: 0,
+                cBlueBits: 0,
+                cBlueShift: 0,
+                cAlphaBits: 8,
+                cAlphaShift: 0,
+                cAccumBits: 0,
+                cAccumRedBits: 0,
+                cAccumGreenBits: 0,
+                cAccumBlueBits: 0,
+                cAccumAlphaBits: 0,
+                cDepthBits: 24,
+                cStencilBits: 8,
+                cAuxBuffers: 0,
+                iLayerType: PFD_MAIN_PLANE.0 as u8,
+                bReserved: 0,
+                dwLayerMask: 0,
+                dwVisibleMask: 0,
+                dwDamageMask: 0,
+            };
+
+            let pixel_format = ChoosePixelFormat(hdc, &pfd);
+            if pixel_format == 0 {
+                eprintln!("Failed to choose pixel format");
+                ReleaseDC(Some(hwnd), hdc);
+                return;
+            }
+
+            if SetPixelFormat(hdc, pixel_format, &pfd).is_err() {
+                eprintln!("Failed to set pixel format");
+                ReleaseDC(Some(hwnd), hdc);
+                return;
+            }
+
+            // Create a temporary legacy context to get extension function pointers
+            let temp_context = match wglCreateContext(hdc) {
+                Ok(ctx) => ctx,
+                Err(_) => {
+                    eprintln!("Failed to create temporary WGL context");
+                    ReleaseDC(Some(hwnd), hdc);
+                    return;
+                }
+            };
+
+            if wglMakeCurrent(hdc, temp_context).is_err() {
+                eprintln!("Failed to make temporary context current");
+                let _ = wglDeleteContext(temp_context);
+                ReleaseDC(Some(hwnd), hdc);
+                return;
+            }
+
+            // Get wglCreateContextAttribsARB function pointer
+            type WglCreateContextAttribsARB = unsafe extern "system" fn(
+                hdc: HDC,
+                hsharecontext: HGLRC,
+                attriblist: *const i32,
+            ) -> HGLRC;
+
+            let wgl_create_context_attribs: Option<WglCreateContextAttribsARB> = {
+                let proc_name = b"wglCreateContextAttribsARB\0";
+                let proc_addr = wglGetProcAddress(windows::core::PCSTR(proc_name.as_ptr()));
+                if proc_addr.is_none() {
+                    eprintln!("wglCreateContextAttribsARB not available - using legacy context");
+                    None
+                } else {
+                    println!("wglCreateContextAttribsARB found, creating OpenGL 3.2 context");
+                    Some(std::mem::transmute(proc_addr.unwrap()))
+                }
+            };
+
+            // Try to create OpenGL 3.2 Core Profile context if available
+            let hglrc = if let Some(create_fn) = wgl_create_context_attribs {
+                const WGL_CONTEXT_MAJOR_VERSION_ARB: i32 = 0x2091;
+                const WGL_CONTEXT_MINOR_VERSION_ARB: i32 = 0x2092;
+                const WGL_CONTEXT_PROFILE_MASK_ARB: i32 = 0x9126;
+                const WGL_CONTEXT_CORE_PROFILE_BIT_ARB: i32 = 0x00000001;
+
+                let attribs = [
+                    WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
+                    WGL_CONTEXT_MINOR_VERSION_ARB, 2,
+                    WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+                    0, // Null terminator
+                ];
+
+                let ctx = create_fn(hdc, HGLRC(std::ptr::null_mut()), attribs.as_ptr());
+
+                if ctx.0.is_null() {
+                    eprintln!("Failed to create OpenGL 3.2 context, keeping temp context");
+                    temp_context
+                } else {
+                    println!("OpenGL 3.2 Core context created successfully");
+                    // Clean up temporary context
+                    let _ = wglMakeCurrent(HDC(std::ptr::null_mut()), HGLRC(std::ptr::null_mut()));
+                    let _ = wglDeleteContext(temp_context);
+                    ctx
+                }
+            } else {
+                // Fall back to legacy context
+                println!("Using legacy OpenGL context");
+                temp_context
+            };
+
+            // Make the context current
+            if wglMakeCurrent(hdc, hglrc).is_err() {
+                eprintln!("Failed to make OpenGL context current");
+                let _ = wglDeleteContext(hglrc);
+                ReleaseDC(Some(hwnd), hdc);
+                return;
+            }
+
+            // Query and print OpenGL version
+            let version_ptr = windows::Win32::Graphics::OpenGL::glGetString(windows::Win32::Graphics::OpenGL::GL_VERSION);
+            if !version_ptr.is_null() {
+                let version = std::ffi::CStr::from_ptr(version_ptr as *const i8);
+                println!("OpenGL version: {:?}", version);
+            } else {
+                eprintln!("Failed to query OpenGL version");
+            }
+
+            // Query renderer info
+            let renderer_ptr = windows::Win32::Graphics::OpenGL::glGetString(windows::Win32::Graphics::OpenGL::GL_RENDERER);
+            if !renderer_ptr.is_null() {
+                let renderer = std::ffi::CStr::from_ptr(renderer_ptr as *const i8);
+                println!("OpenGL renderer: {:?}", renderer);
+            }
+
+            // Load OpenGL function pointers before releasing context
+            gl::load_with(|name| {
+                let name_c = CString::new(name).unwrap();
+                // Try wglGetProcAddress first (for extensions)
+                if let Some(proc) = wglGetProcAddress(windows::core::PCSTR(name_c.as_ptr() as *const u8)) {
+                    return proc as *const std::ffi::c_void;
+                }
+                // Fall back to GetProcAddress from opengl32.dll (for core functions)
+                if let Ok(opengl_module) = windows::Win32::System::LibraryLoader::GetModuleHandleA(windows::core::s!("opengl32.dll")) {
+                    if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(opengl_module, windows::core::PCSTR(name_c.as_ptr() as *const u8)) {
+                        return proc as *const std::ffi::c_void;
+                    }
+                }
+                std::ptr::null()
+            });
+
+            println!("VideoPlayer: OpenGL functions loaded");
+
+            // Create FBO and texture for off-screen rendering
+            self.create_fbo();
+
+            // CRITICAL: Release the context from the main thread so the render thread can use it
+            // OpenGL contexts can only be current on one thread at a time
+            if let Err(e) = wglMakeCurrent(HDC(std::ptr::null_mut()), HGLRC(std::ptr::null_mut())) {
+                eprintln!("Warning: Failed to release OpenGL context from main thread: {:?}", e);
+            } else {
+                println!("OpenGL context released from main thread");
+            }
+
+            self.gl_context = Some(SendGLContext {
+                hwnd: hwnd.0 as isize,
+                hdc: hdc.0 as isize,
+                hglrc: hglrc.0 as isize,
+            });
+
+            println!("VideoPlayer: OpenGL context ready for mpv");
+
+            // Don't create render context here - wait until mpv is initialized in load_file()
+        }
+    }
+
+    /// Create FBO and texture for off-screen rendering
+    fn create_fbo(&mut self) {
+        unsafe {
+            println!("VideoPlayer: Creating FBO for off-screen rendering ({}x{})",
+                self.video_width, self.video_height);
+
+            // Generate framebuffer
+            let mut fbo: u32 = 0;
+            gl::GenFramebuffers(1, &mut fbo);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+
+            // Generate texture
+            let mut texture: u32 = 0;
+            gl::GenTextures(1, &mut texture);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+
+            // Configure texture
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA as i32,
+                self.video_width as i32,
+                self.video_height as i32,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                std::ptr::null(),
+            );
+
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+
+            // Attach texture to FBO
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D,
+                texture,
+                0,
+            );
+
+            // Check FBO completeness
+            let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
+            if status != gl::FRAMEBUFFER_COMPLETE {
+                eprintln!("VideoPlayer: FBO is not complete! Status: 0x{:X}", status);
+            } else {
+                println!("VideoPlayer: FBO created successfully (ID: {}, Texture: {})", fbo, texture);
+            }
+
+            // Unbind FBO
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+
+            self.fbo_id = Some(fbo);
+            self.texture_id = Some(texture);
         }
     }
 
@@ -338,26 +652,56 @@ impl VideoPlayer {
             println!("VideoPlayer: Creating mpv render context");
 
             // Get OpenGL function pointers
-            extern "C" fn get_proc_address(ctx: *mut c_void, name: *const i8) -> *mut c_void {
+            extern "C" fn get_proc_address(_ctx: *mut c_void, name: *const i8) -> *mut c_void {
                 unsafe {
                     let symbol_name = CStr::from_ptr(name).to_str().unwrap();
                     let symbol_name_cstring = CString::new(symbol_name).unwrap();
 
-                    use core_foundation::base::TCFType;
-                    use core_foundation::bundle::{
-                        CFBundleGetBundleWithIdentifier, CFBundleGetFunctionPointerForName,
-                    };
-                    use core_foundation::string::CFString;
+                    #[cfg(target_os = "macos")]
+                    {
+                        use core_foundation::base::TCFType;
+                        use core_foundation::bundle::{
+                            CFBundleGetBundleWithIdentifier, CFBundleGetFunctionPointerForName,
+                        };
+                        use core_foundation::string::CFString;
 
-                    let framework = CFString::from_static_string("com.apple.opengl");
-                    let bundle = CFBundleGetBundleWithIdentifier(framework.as_concrete_TypeRef());
-                    if bundle.is_null() {
-                        return ptr::null_mut();
+                        let framework = CFString::from_static_string("com.apple.opengl");
+                        let bundle = CFBundleGetBundleWithIdentifier(framework.as_concrete_TypeRef());
+                        if bundle.is_null() {
+                            return ptr::null_mut();
+                        }
+
+                        let symbol = CFString::new(symbol_name);
+                        CFBundleGetFunctionPointerForName(bundle, symbol.as_concrete_TypeRef())
+                            as *mut c_void
                     }
 
-                    let symbol = CFString::new(symbol_name);
-                    CFBundleGetFunctionPointerForName(bundle, symbol.as_concrete_TypeRef())
-                        as *mut c_void
+                    #[cfg(target_os = "windows")]
+                    {
+                        use windows::Win32::Graphics::OpenGL::wglGetProcAddress;
+                        use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+                        use windows::core::{PCSTR, s};
+
+                        // First try wglGetProcAddress for extension functions
+                        let addr = wglGetProcAddress(PCSTR(symbol_name_cstring.as_ptr() as *const u8));
+                        if let Some(proc) = addr {
+                            return proc as *mut c_void;
+                        }
+
+                        // Fall back to GetProcAddress from opengl32.dll for core functions
+                        if let Ok(opengl_module) = GetModuleHandleA(s!("opengl32.dll")) {
+                            if let Some(proc) = GetProcAddress(opengl_module, PCSTR(symbol_name_cstring.as_ptr() as *const u8)) {
+                                return proc as *mut c_void;
+                            }
+                        }
+
+                        ptr::null_mut()
+                    }
+
+                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                    {
+                        ptr::null_mut()
+                    }
                 }
             }
 
@@ -382,12 +726,36 @@ impl VideoPlayer {
                 },
             ];
 
+            // On Windows, we need to make the context current temporarily for mpv to query OpenGL capabilities
+            #[cfg(target_os = "windows")]
+            {
+                let gl_ctx = self.gl_context.as_ref().unwrap();
+                let hdc = HDC(gl_ctx.hdc as *mut _);
+                let hglrc = HGLRC(gl_ctx.hglrc as *mut _);
+
+                if let Err(e) = wglMakeCurrent(hdc, hglrc) {
+                    eprintln!("Failed to make context current for render context creation: {:?}", e);
+                    return;
+                }
+                println!("Temporarily made OpenGL context current for mpv initialization");
+            }
+
             let mut render_context: *mut mpv_render_context = ptr::null_mut();
             let ret = mpv_render_context_create(
                 &mut render_context,
                 self.mpv_handle.0,
                 render_params.as_mut_ptr(),
             );
+
+            // On Windows, release the context so the render thread can use it
+            #[cfg(target_os = "windows")]
+            {
+                if let Err(e) = wglMakeCurrent(HDC(std::ptr::null_mut()), HGLRC(std::ptr::null_mut())) {
+                    eprintln!("Warning: Failed to release context after render context creation: {:?}", e);
+                } else {
+                    println!("Released OpenGL context after mpv initialization");
+                }
+            }
 
             if ret < 0 {
                 eprintln!(
@@ -421,21 +789,30 @@ impl VideoPlayer {
             let gl_ctx = self.gl_context.as_ref().unwrap().clone();
             let shutdown = Arc::clone(&self.shutdown);
             let needs_render = Arc::clone(&self.needs_render);
+            let fbo_id = self.fbo_id.expect("FBO must be created before starting render thread");
+            let frame_buffer = Arc::clone(&self.frame_buffer);
+            let video_width = self.video_width;
+            let video_height = self.video_height;
 
             let render_thread = thread::spawn(move || {
-                Self::render_loop(render_ctx, gl_ctx, shutdown, needs_render);
+                Self::render_loop(render_ctx, gl_ctx, shutdown, needs_render, fbo_id, frame_buffer, video_width, video_height);
             });
 
             self.render_thread = Some(render_thread);
         }
     }
 
-    /// Render loop that runs in a separate thread
+    /// Render loop that runs in a separate thread (macOS)
+    #[cfg(target_os = "macos")]
     fn render_loop(
         render_ctx: SendMpvRenderContext,
         gl_context: SendGLContext,
         shutdown: Arc<AtomicBool>,
         needs_render: Arc<AtomicBool>,
+        fbo_id: u32,
+        frame_buffer: Arc<Mutex<Vec<u8>>>,
+        video_width: u32,
+        video_height: u32,
     ) {
         unsafe {
             let _pool = NSAutoreleasePool::new(nil);
@@ -454,31 +831,20 @@ impl VideoPlayer {
                 // Make context current
                 let () = msg_send![gl_context.0, makeCurrentContext];
 
-                // Get framebuffer size using proper backing scale
-                let view: id = msg_send![gl_context.0, view];
-                let bounds: cocoa::foundation::NSRect = msg_send![view, bounds];
-
-                // Get the actual backing scale factor (handles both retina and non-retina)
-                let backing_bounds: cocoa::foundation::NSRect =
-                    msg_send![view, convertRectToBacking: bounds];
-                let width = backing_bounds.size.width as i32;
-                let height = backing_bounds.size.height as i32;
-
-                // Set up render parameters
-                let fbo: i32 = 0; // Default framebuffer
+                // Set up render parameters - render to our custom FBO
                 let mut render_params: Vec<mpv_render_param> = vec![
                     mpv_render_param {
                         type_: mpv_render_param_type_MPV_RENDER_PARAM_OPENGL_FBO,
                         data: &mpv_opengl_fbo {
-                            fbo,
-                            w: width,
-                            h: height,
+                            fbo: fbo_id as i32,
+                            w: video_width as i32,
+                            h: video_height as i32,
                             internal_format: 0,
                         } as *const _ as *mut c_void,
                     },
                     mpv_render_param {
                         type_: mpv_render_param_type_MPV_RENDER_PARAM_FLIP_Y,
-                        data: &1i32 as *const _ as *mut c_void,
+                        data: &0i32 as *const _ as *mut c_void, // Don't flip for FBO
                     },
                     mpv_render_param {
                         type_: mpv_render_param_type_MPV_RENDER_PARAM_INVALID,
@@ -486,14 +852,124 @@ impl VideoPlayer {
                     },
                 ];
 
-                // Render
+                // Render to FBO
                 mpv_render_context_render(render_ctx.0, render_params.as_mut_ptr());
 
-                // Swap buffers
-                let () = msg_send![gl_context.0, flushBuffer];
+                // Read pixels from FBO into frame buffer
+                gl::BindFramebuffer(gl::FRAMEBUFFER, fbo_id);
+
+                if let Ok(mut buffer) = frame_buffer.lock() {
+                    // Use BGRA format to match video color ordering
+                    gl::ReadPixels(
+                        0,
+                        0,
+                        video_width as i32,
+                        video_height as i32,
+                        gl::BGRA,
+                        gl::UNSIGNED_BYTE,
+                        buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                    );
+                }
+
+                gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+
+                // No buffer swap needed - we're not rendering to screen
             }
 
             println!("VideoPlayer: Render loop exiting");
+        }
+    }
+
+    /// Render loop that runs in a separate thread (Windows)
+    #[cfg(target_os = "windows")]
+    fn render_loop(
+        render_ctx: SendMpvRenderContext,
+        gl_context: SendGLContext,
+        shutdown: Arc<AtomicBool>,
+        needs_render: Arc<AtomicBool>,
+        fbo_id: u32,
+        frame_buffer: Arc<Mutex<Vec<u8>>>,
+        video_width: u32,
+        video_height: u32,
+    ) {
+        unsafe {
+            let mut frame_count = 0u64;
+            println!("VideoPlayer: Windows render loop started");
+
+            loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                // Wait for render flag or timeout
+                if !needs_render.swap(false, Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 FPS
+                    continue;
+                }
+
+                // Make WGL context current
+                let hdc = HDC(gl_context.hdc as *mut _);
+                let hglrc = HGLRC(gl_context.hglrc as *mut _);
+                if let Err(e) = wglMakeCurrent(hdc, hglrc) {
+                    eprintln!("Failed to make WGL context current in render loop: {:?}", e);
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                    continue;
+                }
+
+                // Set up render parameters - render to our custom FBO
+                let opengl_fbo = mpv_opengl_fbo {
+                    fbo: fbo_id as i32,
+                    w: video_width as i32,
+                    h: video_height as i32,
+                    internal_format: 0,
+                };
+                let flip_y: i32 = 0; // Don't flip for FBO
+
+                let mut render_params: Vec<mpv_render_param> = vec![
+                    mpv_render_param {
+                        type_: mpv_render_param_type_MPV_RENDER_PARAM_OPENGL_FBO,
+                        data: &opengl_fbo as *const _ as *mut c_void,
+                    },
+                    mpv_render_param {
+                        type_: mpv_render_param_type_MPV_RENDER_PARAM_FLIP_Y,
+                        data: &flip_y as *const _ as *mut c_void,
+                    },
+                    mpv_render_param {
+                        type_: mpv_render_param_type_MPV_RENDER_PARAM_INVALID,
+                        data: ptr::null_mut(),
+                    },
+                ];
+
+                // Render to FBO
+                mpv_render_context_render(render_ctx.0, render_params.as_mut_ptr());
+
+                // Read pixels from FBO into frame buffer
+                gl::BindFramebuffer(gl::FRAMEBUFFER, fbo_id);
+
+                if let Ok(mut buffer) = frame_buffer.lock() {
+                    // Use BGRA format to match video color ordering
+                    gl::ReadPixels(
+                        0,
+                        0,
+                        video_width as i32,
+                        video_height as i32,
+                        gl::BGRA,
+                        gl::UNSIGNED_BYTE,
+                        buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                    );
+                }
+
+                gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+
+                // No buffer swap needed - we're not rendering to screen
+
+                frame_count += 1;
+                if frame_count % 60 == 0 {
+                    println!("VideoPlayer: Rendered {} frames ({}x{})", frame_count, video_width, video_height);
+                }
+            }
+
+            println!("VideoPlayer: Render loop exiting (rendered {} frames)", frame_count);
         }
     }
 
@@ -686,6 +1162,16 @@ impl VideoPlayer {
                 .to_string()
         }
     }
+
+    /// Get a reference to the frame buffer for rendering in GPUI
+    pub fn get_frame_buffer(&self) -> Arc<Mutex<Vec<u8>>> {
+        Arc::clone(&self.frame_buffer)
+    }
+
+    /// Get video dimensions
+    pub fn get_video_dimensions(&self) -> (u32, u32) {
+        (self.video_width, self.video_height)
+    }
 }
 
 impl Drop for VideoPlayer {
@@ -722,10 +1208,24 @@ impl Drop for VideoPlayer {
             }
         }
 
-        // Release OpenGL context
+        // Release OpenGL context (platform-specific)
+        #[cfg(target_os = "macos")]
         unsafe {
             if let Some(gl_ctx) = self.gl_context.take() {
                 let () = msg_send![gl_ctx.0, release];
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        unsafe {
+            if let Some(gl_ctx) = self.gl_context.take() {
+                let hdc = HDC(gl_ctx.hdc as *mut _);
+                let hglrc = HGLRC(gl_ctx.hglrc as *mut _);
+                let hwnd = HWND(gl_ctx.hwnd as *mut _);
+
+                wglMakeCurrent(HDC(std::ptr::null_mut()), HGLRC(std::ptr::null_mut()));
+                wglDeleteContext(hglrc);
+                ReleaseDC(Some(hwnd), hdc);
             }
         }
     }
