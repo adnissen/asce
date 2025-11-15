@@ -1,9 +1,8 @@
 //! macOS-specific platform implementation using NSWindow for OpenGL rendering
 
 use cocoa::foundation::{NSPoint, NSRect, NSSize};
-use gpui::{Pixels, Window};
+use gpui::Window;
 use objc::runtime::Object;
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::{Arc, Mutex};
 
 use crate::video_player::VideoPlayer;

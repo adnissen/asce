@@ -16,6 +16,8 @@ use cocoa::appkit::{NSOpenGLContext, NSOpenGLPixelFormat};
 use cocoa::base::{id, nil};
 #[cfg(target_os = "macos")]
 use cocoa::foundation::NSAutoreleasePool;
+#[cfg(target_os = "macos")]
+use core_foundation::base::TCFType;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::*;
@@ -388,6 +390,9 @@ impl VideoPlayer {
             // Create FBO and texture for off-screen rendering
             self.create_fbo();
 
+            // NOTE: Don't clear the context here - we need to keep it current for mpv initialization
+            // The context will be cleared later in create_render_context() after mpv is done querying OpenGL
+
             // Don't create render context here - wait until mpv is initialized in load_file()
         }
     }
@@ -726,6 +731,15 @@ impl VideoPlayer {
                 },
             ];
 
+            // On macOS, we need to make the context current temporarily for mpv to query OpenGL capabilities
+            // The context should already be current from set_window_handle(), but we ensure it here
+            #[cfg(target_os = "macos")]
+            {
+                let gl_ctx = self.gl_context.as_ref().unwrap();
+                let () = msg_send![gl_ctx.0, makeCurrentContext];
+                println!("Ensuring OpenGL context is current for mpv initialization");
+            }
+
             // On Windows, we need to make the context current temporarily for mpv to query OpenGL capabilities
             #[cfg(target_os = "windows")]
             {
@@ -746,6 +760,13 @@ impl VideoPlayer {
                 self.mpv_handle.0,
                 render_params.as_mut_ptr(),
             );
+
+            // On macOS, clear the context so the render thread can use it
+            #[cfg(target_os = "macos")]
+            {
+                let () = msg_send![class!(NSOpenGLContext), clearCurrentContext];
+                println!("Cleared OpenGL context from main thread after mpv initialization");
+            }
 
             // On Windows, release the context so the render thread can use it
             #[cfg(target_os = "windows")]
@@ -816,6 +837,12 @@ impl VideoPlayer {
     ) {
         unsafe {
             let _pool = NSAutoreleasePool::new(nil);
+            let mut frame_count = 0u64;
+            println!("VideoPlayer: macOS render loop started");
+
+            // Make context current on this render thread at the start
+            let () = msg_send![gl_context.0, makeCurrentContext];
+            println!("OpenGL context made current on render thread");
 
             loop {
                 if shutdown.load(Ordering::SeqCst) {
@@ -828,7 +855,7 @@ impl VideoPlayer {
                     continue;
                 }
 
-                // Make context current
+                // Context is already current on this thread, but we can ensure it here
                 let () = msg_send![gl_context.0, makeCurrentContext];
 
                 // Set up render parameters - render to our custom FBO
@@ -874,9 +901,14 @@ impl VideoPlayer {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
 
                 // No buffer swap needed - we're not rendering to screen
+
+                frame_count += 1;
+                if frame_count % 60 == 0 {
+                    println!("VideoPlayer: Rendered {} frames ({}x{})", frame_count, video_width, video_height);
+                }
             }
 
-            println!("VideoPlayer: Render loop exiting");
+            println!("VideoPlayer: Render loop exiting (rendered {} frames)", frame_count);
         }
     }
 
@@ -1212,6 +1244,8 @@ impl Drop for VideoPlayer {
         #[cfg(target_os = "macos")]
         unsafe {
             if let Some(gl_ctx) = self.gl_context.take() {
+                // Clear current context before releasing
+                let () = msg_send![class!(NSOpenGLContext), clearCurrentContext];
                 let () = msg_send![gl_ctx.0, release];
             }
         }
