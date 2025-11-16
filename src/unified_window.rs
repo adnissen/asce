@@ -1,7 +1,8 @@
 use gpui::{
-    canvas, div, prelude::*, px, rgb, Bounds, Context, Corners, Entity, IntoElement, Render, RenderImage, Size, Window,
+    canvas, div, prelude::*, px, rgb, Bounds, Context, Corners, Entity, IntoElement, Render,
+    RenderImage, Size, Window,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::controls_window::ControlsWindow;
 use crate::platform;
@@ -15,6 +16,7 @@ pub struct UnifiedWindow {
     pub subtitles: Entity<SubtitleWindow>,
     video_area_size: Size<gpui::Pixels>,
     last_bounds: Option<Bounds<gpui::Pixels>>,
+    last_video_render_image: Arc<Mutex<Option<Arc<RenderImage>>>>,
 }
 
 impl UnifiedWindow {
@@ -45,6 +47,7 @@ impl UnifiedWindow {
                 height: px(540.0),
             },
             last_bounds: None,
+            last_video_render_image: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -93,7 +96,8 @@ impl Render for UnifiedWindow {
         let total_height = window_bounds.size.height;
 
         // Check if bounds have changed and update child NSView if needed
-        let bounds_changed = self.last_bounds
+        let bounds_changed = self
+            .last_bounds
             .map(|last| {
                 let width_changed = format!("{}", last.size.width) != format!("{}", total_width);
                 let height_changed = format!("{}", last.size.height) != format!("{}", total_height);
@@ -130,26 +134,32 @@ impl Render for UnifiedWindow {
             .bg(rgb(0x000000))
             .size_full()
             // Close subtitle context menu on any click outside the subtitle window
-            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                // Check if subtitle window has an open context menu and close it
-                this.subtitles.update(cx, |subtitles, cx| {
-                    if subtitles.context_menu.is_some() {
-                        println!("Closing context menu from unified window click");
-                        subtitles.context_menu = None;
-                        cx.notify();
-                    }
-                });
-            }))
-            .on_mouse_down(gpui::MouseButton::Right, cx.listener(|this, _, _, cx| {
-                // Close context menu on right-click anywhere
-                this.subtitles.update(cx, |subtitles, cx| {
-                    if subtitles.context_menu.is_some() {
-                        println!("Closing context menu from unified window right-click");
-                        subtitles.context_menu = None;
-                        cx.notify();
-                    }
-                });
-            }))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    // Check if subtitle window has an open context menu and close it
+                    this.subtitles.update(cx, |subtitles, cx| {
+                        if subtitles.context_menu.is_some() {
+                            println!("Closing context menu from unified window click");
+                            subtitles.context_menu = None;
+                            cx.notify();
+                        }
+                    });
+                }),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(|this, _, _, cx| {
+                    // Close context menu on right-click anywhere
+                    this.subtitles.update(cx, |subtitles, cx| {
+                        if subtitles.context_menu.is_some() {
+                            println!("Closing context menu from unified window right-click");
+                            subtitles.context_menu = None;
+                            cx.notify();
+                        }
+                    });
+                }),
+            )
             // Top section: video (left) and subtitles (right)
             .child(
                 div()
@@ -164,7 +174,10 @@ impl Render for UnifiedWindow {
                             .w(video_width)
                             .h(video_section_height)
                             .bg(rgb(0x000000))
-                            .child(
+                            .child({
+                                // Clone the Arc<Mutex<>> to share with paint closure
+                                let last_image = self.last_video_render_image.clone();
+
                                 canvas(
                                     move |_bounds, _window, cx| {
                                         // Get frame buffer from video player (prepaint phase)
@@ -173,35 +186,34 @@ impl Render for UnifiedWindow {
 
                                         // Prepare frame data
                                         if let Ok(player) = video_player.lock() {
+                                            // Get Arc<Vec<u8>> - cheap Arc clone, no Vec clone!
                                             let frame_buffer_arc = player.get_frame_buffer();
                                             let (width, height) = player.get_video_dimensions();
 
-                                            // Clone the Arc and release the player lock before locking frame_buffer
+                                            // Release the player lock
                                             drop(player);
 
-                                            // Clone the buffer data to avoid lifetime issues
-                                            let buffer_clone = if let Ok(buffer_data) = frame_buffer_arc.lock() {
-                                                Some(buffer_data.clone())
-                                            } else {
-                                                None
-                                            };
+                                            // Use Arc::try_unwrap or clone the data for RgbaImage
+                                            // RgbaImage::from_raw takes ownership of Vec, so we need to extract it
+                                            let buffer = Arc::try_unwrap(frame_buffer_arc)
+                                                .unwrap_or_else(|arc| (*arc).clone());
 
-                                            if let Some(buffer) = buffer_clone {
-                                                // Buffer is in BGRA format from OpenGL ReadPixels
-                                                // No channel swap needed - pass directly to RgbaImage
+                                            // Buffer is in BGRA format from OpenGL ReadPixels
+                                            // No channel swap needed - pass directly to RgbaImage
 
-                                                // Create image::Frame from buffer
-                                                use image::{RgbaImage, Frame, Delay};
+                                            // Create image::Frame from buffer
+                                            use image::{Delay, Frame, RgbaImage};
 
-                                                if let Some(rgba_image) = RgbaImage::from_raw(width, height, buffer) {
-                                                    let frame = Frame::from_parts(
-                                                        rgba_image.into(),
-                                                        0,
-                                                        0,
-                                                        Delay::from_numer_denom_ms(0, 1),
-                                                    );
-                                                    return Some(smallvec::smallvec![frame]);
-                                                }
+                                            if let Some(rgba_image) =
+                                                RgbaImage::from_raw(width, height, buffer)
+                                            {
+                                                let frame = Frame::from_parts(
+                                                    rgba_image.into(),
+                                                    0,
+                                                    0,
+                                                    Delay::from_numer_denom_ms(0, 1),
+                                                );
+                                                return Some(smallvec::smallvec![frame]);
                                             }
                                         }
                                         None
@@ -209,18 +221,32 @@ impl Render for UnifiedWindow {
                                     move |bounds, frame_data, window, _cx| {
                                         // Paint the frame (paint phase)
                                         if let Some(frames) = frame_data {
-                                            let image = RenderImage::new(frames);
-                                            let _ = window.paint_image(
-                                                bounds,
-                                                Corners::default(),
-                                                Arc::new(image),
-                                                0,  // frame_index
-                                                false,  // grayscale
-                                            );
+                                            let new_image = Arc::new(RenderImage::new(frames));
+
+                                            // Drop the previous frame from sprite atlas before painting new one
+                                            if let Ok(mut last) = last_image.lock() {
+                                                if let Some(old_image) = last.take() {
+                                                    let _ = window.drop_image(old_image);
+                                                }
+
+                                                // Paint the new frame
+                                                let _ = window.paint_image(
+                                                    bounds,
+                                                    Corners::default(),
+                                                    new_image.clone(),
+                                                    0,     // frame_index
+                                                    false, // grayscale
+                                                );
+
+                                                // Store the new image for next frame
+                                                *last = Some(new_image);
+                                            }
                                         }
                                     },
-                                ).w_full().h_full()
-                            )
+                                )
+                                .w_full()
+                                .h_full()
+                            }),
                     )
                     // Subtitle window area
                     .child(

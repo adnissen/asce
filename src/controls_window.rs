@@ -1,4 +1,5 @@
 use gpui::{div, prelude::*, px, rgb, Context, Entity, IntoElement, MouseButton, Render, Window};
+use std::time::Instant;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::slider::{Slider, SliderEvent, SliderState, SliderValue};
@@ -21,6 +22,7 @@ pub struct ControlsWindow {
     is_playing_clip: bool,
     clip_playback_end: Option<f32>, // milliseconds - when to stop during clip playback
     last_seek_time: Option<f32>,    // milliseconds - video time when user clicked "Play Clip"
+    last_render_time: Instant,      // For rate limiting renders to 30 FPS
 }
 
 impl ControlsWindow {
@@ -90,6 +92,7 @@ impl ControlsWindow {
             is_playing_clip: false,
             clip_playback_end: None,
             last_seek_time: None,
+            last_render_time: Instant::now(),
         }
     }
 
@@ -349,8 +352,16 @@ impl Render for ControlsWindow {
                 }
             }
 
-            // Request another render on next frame to create continuous updates
-            cx.notify();
+            // Rate limit renders to 30 FPS (33.33ms per frame)
+            const FRAME_DURATION_MS: u128 = 33; // 1000ms / 30fps ≈ 33.33ms
+            let now = Instant::now();
+            let elapsed = now.duration_since(t.last_render_time).as_millis();
+
+            if elapsed >= FRAME_DURATION_MS {
+                t.last_render_time = now;
+                // Request another render on next frame to create continuous updates
+                cx.notify();
+            }
         });
 
         // Update slider state to match current video position and duration

@@ -158,7 +158,7 @@ pub struct VideoPlayer {
     texture_id: Option<u32>,
     video_width: u32,
     video_height: u32,
-    frame_buffer: Arc<Mutex<Vec<u8>>>,
+    frame_buffer: Arc<Mutex<Arc<Vec<u8>>>>,
 }
 
 impl VideoPlayer {
@@ -193,7 +193,7 @@ impl VideoPlayer {
                 texture_id: None,
                 video_width,
                 video_height,
-                frame_buffer: Arc::new(Mutex::new(vec![0u8; buffer_size])),
+                frame_buffer: Arc::new(Mutex::new(Arc::new(vec![0u8; buffer_size]))),
             }
         }
     }
@@ -831,7 +831,7 @@ impl VideoPlayer {
         shutdown: Arc<AtomicBool>,
         needs_render: Arc<AtomicBool>,
         fbo_id: u32,
-        frame_buffer: Arc<Mutex<Vec<u8>>>,
+        frame_buffer: Arc<Mutex<Arc<Vec<u8>>>>,
         video_width: u32,
         video_height: u32,
     ) {
@@ -885,17 +885,24 @@ impl VideoPlayer {
                 // Read pixels from FBO into frame buffer
                 gl::BindFramebuffer(gl::FRAMEBUFFER, fbo_id);
 
-                if let Ok(mut buffer) = frame_buffer.lock() {
-                    // Use BGRA format to match video color ordering
-                    gl::ReadPixels(
-                        0,
-                        0,
-                        video_width as i32,
-                        video_height as i32,
-                        gl::BGRA,
-                        gl::UNSIGNED_BYTE,
-                        buffer.as_mut_ptr() as *mut std::ffi::c_void,
-                    );
+                // Create a new buffer and read pixels into it, then wrap in Arc
+                let buffer_size = (video_width * video_height * 4) as usize;
+                let mut new_buffer = vec![0u8; buffer_size];
+
+                // Use BGRA format to match video color ordering
+                gl::ReadPixels(
+                    0,
+                    0,
+                    video_width as i32,
+                    video_height as i32,
+                    gl::BGRA,
+                    gl::UNSIGNED_BYTE,
+                    new_buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                );
+
+                // Replace the Arc in the mutex (cheap Arc clone by GPUI instead of Vec clone)
+                if let Ok(mut buffer_arc) = frame_buffer.lock() {
+                    *buffer_arc = Arc::new(new_buffer);
                 }
 
                 gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -920,7 +927,7 @@ impl VideoPlayer {
         shutdown: Arc<AtomicBool>,
         needs_render: Arc<AtomicBool>,
         fbo_id: u32,
-        frame_buffer: Arc<Mutex<Vec<u8>>>,
+        frame_buffer: Arc<Mutex<Arc<Vec<u8>>>>,
         video_width: u32,
         video_height: u32,
     ) {
@@ -978,17 +985,24 @@ impl VideoPlayer {
                 // Read pixels from FBO into frame buffer
                 gl::BindFramebuffer(gl::FRAMEBUFFER, fbo_id);
 
-                if let Ok(mut buffer) = frame_buffer.lock() {
-                    // Use BGRA format to match video color ordering
-                    gl::ReadPixels(
-                        0,
-                        0,
-                        video_width as i32,
-                        video_height as i32,
-                        gl::BGRA,
-                        gl::UNSIGNED_BYTE,
-                        buffer.as_mut_ptr() as *mut std::ffi::c_void,
-                    );
+                // Create a new buffer and read pixels into it, then wrap in Arc
+                let buffer_size = (video_width * video_height * 4) as usize;
+                let mut new_buffer = vec![0u8; buffer_size];
+
+                // Use BGRA format to match video color ordering
+                gl::ReadPixels(
+                    0,
+                    0,
+                    video_width as i32,
+                    video_height as i32,
+                    gl::BGRA,
+                    gl::UNSIGNED_BYTE,
+                    new_buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                );
+
+                // Replace the Arc in the mutex (cheap Arc clone by GPUI instead of Vec clone)
+                if let Ok(mut buffer_arc) = frame_buffer.lock() {
+                    *buffer_arc = Arc::new(new_buffer);
                 }
 
                 gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -1196,8 +1210,9 @@ impl VideoPlayer {
     }
 
     /// Get a reference to the frame buffer for rendering in GPUI
-    pub fn get_frame_buffer(&self) -> Arc<Mutex<Vec<u8>>> {
-        Arc::clone(&self.frame_buffer)
+    pub fn get_frame_buffer(&self) -> Arc<Vec<u8>> {
+        // Lock the mutex and clone the Arc (cheap), not the Vec (expensive)
+        self.frame_buffer.lock().unwrap().clone()
     }
 
     /// Get video dimensions
@@ -1237,6 +1252,30 @@ impl Drop for VideoPlayer {
             if !self.mpv_handle.0.is_null() {
                 mpv_terminate_destroy(self.mpv_handle.0);
                 self.mpv_handle.0 = ptr::null_mut();
+            }
+        }
+
+        // Clean up OpenGL FBO and texture resources
+        unsafe {
+            if let (Some(fbo_id), Some(texture_id)) = (self.fbo_id, self.texture_id) {
+                // Make context current before deleting resources
+                #[cfg(target_os = "macos")]
+                if let Some(ref gl_ctx) = self.gl_context {
+                    let () = msg_send![gl_ctx.0, makeCurrentContext];
+                }
+
+                #[cfg(target_os = "windows")]
+                if let Some(ref gl_ctx) = self.gl_context {
+                    let hdc = HDC(gl_ctx.hdc as *mut _);
+                    let hglrc = HGLRC(gl_ctx.hglrc as *mut _);
+                    wglMakeCurrent(hdc, hglrc);
+                }
+
+                // Delete OpenGL resources
+                gl::DeleteFramebuffers(1, &fbo_id);
+                gl::DeleteTextures(1, &texture_id);
+
+                println!("VideoPlayer: Cleaned up OpenGL FBO ({}) and texture ({})", fbo_id, texture_id);
             }
         }
 
