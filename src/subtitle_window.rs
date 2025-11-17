@@ -31,6 +31,7 @@ pub struct SubtitleWindow {
     current_search_result_index: Option<usize>, // Index within search_result_indices of the current result
     last_scrolled_to_search: Option<usize>, // Last search result we scrolled to (to avoid re-scrolling)
     last_scrolled_to_video: Option<usize>,  // Last video position we scrolled to
+    last_submitted_search_term: Option<String>, // Last search term submitted via Enter (to distinguish NEW vs SAME searches)
     pub context_menu: Option<ContextMenuState>, // Right-click context menu state (public so unified window can close it)
 }
 
@@ -140,24 +141,28 @@ impl SubtitleWindow {
         // Subscribe to checkbox events to update AppState
         cx.subscribe(
             &sync_subtitles_to_video,
-            |_this, _, event: &CheckboxEvent, cx| {
+            |this, _, event: &CheckboxEvent, cx| {
                 let CheckboxEvent::Change(checked) = event;
+
+                // Update AppState
                 cx.update_global::<AppState, _>(|state, _| {
                     state.synced_to_video = *checked;
                 });
+
+                // When turning ON sync to video, clear all search state
+                if *checked {
+                    this.search_result_indices.clear();
+                    this.current_search_result_index = None;
+                    this.last_submitted_search_term = None;
+                    this.last_scrolled_to_search = None;
+                    cx.notify();
+                }
             },
         )
         .detach();
 
         // Create search input
         let search_input = cx.new(|cx| SearchInput::new(cx));
-
-        // Subscribe to search input changes to update results in real-time
-        cx.observe(&search_input, |this, _search_input, cx| {
-            // When search input changes, update the search results
-            this.update_search_results(cx);
-        })
-        .detach();
 
         Self {
             select_state,
@@ -171,6 +176,7 @@ impl SubtitleWindow {
             current_search_result_index: None,
             last_scrolled_to_search: None,
             last_scrolled_to_video: None,
+            last_submitted_search_term: None,
             context_menu: None,
         }
     }
@@ -273,25 +279,14 @@ impl SubtitleWindow {
         cx.notify();
     }
 
-    /// Move to the next search result (cycling)
+    /// Move to the next search result (cycling/wrapping)
     fn search_next(&mut self, cx: &mut Context<Self>) {
-        let search_text = self.search_input.read(cx).content();
-
-        // If search text changed, update results
-        if search_text.is_empty() {
-            self.search_result_indices.clear();
-            self.current_search_result_index = None;
-            cx.notify();
-            return;
-        }
-
-        // If we don't have results yet, find them
+        // If we don't have any results, do nothing
         if self.search_result_indices.is_empty() {
-            self.update_search_results(cx);
             return;
         }
 
-        // Move to next result (cycle)
+        // Move to next result (wrap to 0 if at end)
         if let Some(current_idx) = self.current_search_result_index {
             let next_idx = (current_idx + 1) % self.search_result_indices.len();
             self.current_search_result_index = Some(next_idx);
@@ -307,7 +302,29 @@ impl SubtitleWindow {
 
     /// Handle Enter key in search input
     fn on_search_enter(&mut self, cx: &mut Context<Self>) {
-        self.search_next(cx);
+        let current_search_text = self.search_input.read(cx).content();
+
+        // If search text is empty, do nothing
+        if current_search_text.is_empty() {
+            return;
+        }
+
+        // Compare with last submitted search term
+        if self.last_submitted_search_term.as_ref() != Some(&current_search_text) {
+            // NEW search term
+            self.last_submitted_search_term = Some(current_search_text.clone());
+
+            // Turn OFF sync to video
+            self.sync_subtitles_to_video.update(cx, |state, cx| {
+                state.set_checked(false, cx);
+            });
+
+            // Perform search and jump to first result (index 0)
+            self.update_search_results(cx);
+        } else {
+            // SAME search term - increment to next result
+            self.search_next(cx);
+        }
     }
 
     /// Handle Escape key in search input
@@ -318,7 +335,8 @@ impl SubtitleWindow {
         });
         self.search_result_indices.clear();
         self.current_search_result_index = None;
-        self.last_scrolled_to_search = None; // Clear scroll tracking
+        self.last_scrolled_to_search = None;
+        self.last_submitted_search_term = None;
         cx.notify();
     }
 
