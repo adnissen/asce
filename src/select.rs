@@ -55,8 +55,7 @@ impl<T: SelectItem> SelectState<T> {
 
     /// Get the selected item
     pub fn selected_item(&self) -> Option<&T> {
-        self.selected_index
-            .and_then(|idx| self.items.get(idx))
+        self.selected_index.and_then(|idx| self.items.get(idx))
     }
 
     /// Update the items list
@@ -182,10 +181,11 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                     )
                     .child(
                         // Dropdown arrow
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x999999))
-                            .child(if is_open { "▲" } else { "▼" }),
+                        div().text_sm().text_color(rgb(0x999999)).child(if is_open {
+                            "▲"
+                        } else {
+                            "▼"
+                        }),
                     ),
             )
             .when(is_open, |el| {
@@ -216,14 +216,15 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                                 .opacity(1.0)
                                 .bg(rgb(0x1a1a1a)) // Fully opaque background for all items
                                 .when(is_selected, |style| style.bg(rgb(0x4caf50)))
-                                .when(!is_selected, |style| {
-                                    style.hover(|s| s.bg(rgb(0x2d2d2d)))
-                                })
+                                .when(!is_selected, |style| style.hover(|s| s.bg(rgb(0x2d2d2d))))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    window.listener_for(&state_clone, move |state, _: &MouseDownEvent, _, cx| {
-                                        state.select_item(idx, cx);
-                                    }),
+                                    window.listener_for(
+                                        &state_clone,
+                                        move |state, _: &MouseDownEvent, _, cx| {
+                                            state.select_item(idx, cx);
+                                        },
+                                    ),
                                 )
                                 .child(
                                     div()

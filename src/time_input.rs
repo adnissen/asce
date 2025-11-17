@@ -374,10 +374,13 @@ impl Render for TimeInput {
             .key_context("TimeInput")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::backspace))
-            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
-                window.focus(&this.focus_handle);
-                cx.notify();
-            }))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    window.focus(&this.focus_handle);
+                    cx.notify();
+                }),
+            )
             .child(TimeInputElement::new(cx.entity()))
     }
 }

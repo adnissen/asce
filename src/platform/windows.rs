@@ -38,14 +38,8 @@ pub fn create_child_video_surface(
     // Extract numeric values from Pixels
     let width_str = format!("{}", video_width_px);
     let height_str = format!("{}", video_height_px);
-    let video_width: i32 = width_str
-        .trim_end_matches("px")
-        .parse()
-        .unwrap_or(960.0) as i32;
-    let video_height: i32 = height_str
-        .trim_end_matches("px")
-        .parse()
-        .unwrap_or(540.0) as i32;
+    let video_width: i32 = width_str.trim_end_matches("px").parse().unwrap_or(960.0) as i32;
+    let video_height: i32 = height_str.trim_end_matches("px").parse().unwrap_or(540.0) as i32;
 
     println!(
         "Creating hidden window with size: {}x{} for OpenGL context",
@@ -82,7 +76,10 @@ pub fn create_child_video_surface(
         // Register the class (ignore error if already registered)
         let _ = RegisterClassExW(&wc);
 
-        println!("Creating hidden video window with size {}x{}", video_width, video_height);
+        println!(
+            "Creating hidden video window with size {}x{}",
+            video_width, video_height
+        );
 
         // Create a hidden popup window (no parent, not visible)
         // WS_POPUP creates an independent window
@@ -100,7 +97,8 @@ pub fn create_child_video_surface(
             None,
             Some(h_instance),
             None,
-        ).ok()?;
+        )
+        .ok()?;
 
         if hidden_hwnd.0.is_null() {
             eprintln!("Failed to create hidden window");
@@ -153,10 +151,7 @@ pub fn resize_child_video_surface(hidden_handle: usize, width: f64, height: f64)
             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
 
-        println!(
-            "Resized hidden HWND to {}x{}",
-            width as i32, height as i32
-        );
+        println!("Resized hidden HWND to {}x{}", width as i32, height as i32);
     }
 }
 

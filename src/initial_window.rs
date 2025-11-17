@@ -1,6 +1,4 @@
-use gpui::{
-    div, prelude::*, rgb, Context, IntoElement, PathPromptOptions, Render, Window,
-};
+use gpui::{div, prelude::*, rgb, Context, IntoElement, PathPromptOptions, Render, Window};
 
 use crate::ffmpeg_export;
 
@@ -50,7 +48,11 @@ impl Render for InitialWindow {
                                             let path_clone = path_string.clone();
 
                                             cx.update(|cx| {
-                                                crate::create_video_windows(cx, path_string, path_clone);
+                                                crate::create_video_windows(
+                                                    cx,
+                                                    path_string,
+                                                    path_clone,
+                                                );
                                             })
                                             .ok();
                                         } else {

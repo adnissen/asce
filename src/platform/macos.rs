@@ -75,7 +75,10 @@ pub fn create_child_video_surface(
                 let _: () = msg_send![content_view, setWantsLayer: true];
 
                 let content_view_ptr = content_view as usize;
-                println!("Hidden NSWindow created with content view at: 0x{:x}", content_view_ptr);
+                println!(
+                    "Hidden NSWindow created with content view at: 0x{:x}",
+                    content_view_ptr
+                );
 
                 // Pass the content view pointer to the video player
                 // (OpenGL context will attach to this view)

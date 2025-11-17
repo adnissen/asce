@@ -18,8 +18,7 @@ fn main() {
     println!("cargo:rustc-link-lib=mpv");
 
     // Generate bindings for libmpv
-    let mut builder = bindgen::Builder::default()
-        .header("wrapper.h");
+    let mut builder = bindgen::Builder::default().header("wrapper.h");
 
     // Add include paths
     for path in include_paths {
@@ -54,10 +53,7 @@ fn setup_windows() -> (Vec<PathBuf>, Option<PathBuf>) {
     let mpv_root = match env::var("MPV_DIR") {
         Ok(path) => PathBuf::from(path),
         Err(_) => {
-            let candidates = vec![
-                PathBuf::from("C:\\mpv-dev"),
-                PathBuf::from("C:\\mpv"),
-            ];
+            let candidates = vec![PathBuf::from("C:\\mpv-dev"), PathBuf::from("C:\\mpv")];
             candidates.into_iter()
                 .find(|p| p.exists())
                 .expect("libmpv not found. Please:\n\

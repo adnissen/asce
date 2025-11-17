@@ -51,7 +51,7 @@ pub fn extract_subtitle_stream(file_path: &str, stream_index: usize) -> Result<S
             &format!("0:s:{}", stream_index), // Map the specific subtitle stream
             "-f",
             "srt", // Output format: SRT
-            "-", // Output to stdout
+            "-",   // Output to stdout
         ])
         .output()
         .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
@@ -167,7 +167,10 @@ fn format_timecode(ms: u64) -> String {
     let seconds = (ms % 60000) / 1000;
     let milliseconds = ms % 1000;
 
-    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, seconds, milliseconds)
+    format!(
+        "{:02}:{:02}:{:02},{:03}",
+        hours, minutes, seconds, milliseconds
+    )
 }
 
 #[cfg(test)]

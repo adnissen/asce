@@ -25,8 +25,8 @@ mod video_player;
 mod video_player_window;
 
 use gpui::{
-    actions, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Global, Menu,
-    MenuItem, PathPromptOptions, SystemMenuType, WindowOptions, px,
+    actions, px, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Global, Menu,
+    MenuItem, PathPromptOptions, SystemMenuType, WindowOptions,
 };
 use initial_window::InitialWindow;
 use raw_window_handle::RawWindowHandle;
@@ -68,9 +68,11 @@ fn main() {
         ]);
 
         // Bind keys for time input
-        cx.bind_keys([
-            gpui::KeyBinding::new("backspace", time_input::Backspace, Some("TimeInput")),
-        ]);
+        cx.bind_keys([gpui::KeyBinding::new(
+            "backspace",
+            time_input::Backspace,
+            Some("TimeInput"),
+        )]);
 
         // Add menu items
         set_app_menus(cx);
@@ -174,6 +176,7 @@ pub struct AppState {
     pub video_player: Arc<Mutex<video_player::VideoPlayer>>,
     pub synced_to_video: bool,
     pub selected_subtitle_track: Option<usize>, // Currently selected subtitle track index
+    pub display_subtitles: bool,
 }
 
 impl AppState {
@@ -184,8 +187,9 @@ impl AppState {
             unified_window: None,
             video_nsview: None,
             video_player: Arc::new(Mutex::new(video_player::VideoPlayer::new())),
-            synced_to_video: true, // Default to checked/synced
-            selected_subtitle_track: None, // No track selected initially
+            synced_to_video: true,            // Default to checked/synced
+            selected_subtitle_track: Some(1), // No track selected initially
+            display_subtitles: false,         // Don't display subtitles initially
         }
     }
 
@@ -350,10 +354,15 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
 
         cx.spawn(async move |cx| {
             // Run blocking subtitle loading on background executor
-            let subtitle_data = cx.background_executor().spawn(async move {
-                println!("Loading subtitles on background thread...");
-                crate::subtitle_window::SubtitleWindow::load_subtitle_data_blocking(&path_for_subtitles)
-            }).await;
+            let subtitle_data = cx
+                .background_executor()
+                .spawn(async move {
+                    println!("Loading subtitles on background thread...");
+                    crate::subtitle_window::SubtitleWindow::load_subtitle_data_blocking(
+                        &path_for_subtitles,
+                    )
+                })
+                .await;
 
             // Update UI on main thread with loaded data
             if let Some(data) = subtitle_data {
@@ -370,11 +379,13 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
                             }
                         })
                         .ok();
-                }).ok();
+                })
+                .ok();
             } else {
                 println!("No subtitle data loaded");
             }
-        }).detach();
+        })
+        .detach();
     }
 }
 

@@ -3,9 +3,9 @@
 use std::ops::Range;
 
 use gpui::{
-    Along, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, EntityId, EventEmitter,
-    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Render, RenderOnce,
-    StyleRefinement, Styled, Window, canvas, div, prelude::*, px, rgb,
+    canvas, div, prelude::*, px, rgb, Along, App, Axis, Bounds, Context, DragMoveEvent, Empty,
+    Entity, EntityId, EventEmitter, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    Pixels, Point, Render, RenderOnce, StyleRefinement, Styled, Window,
 };
 
 #[derive(Clone)]

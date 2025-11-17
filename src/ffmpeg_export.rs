@@ -7,7 +7,9 @@ use std::process::Command;
 
 /// Get list of supported video file extensions
 pub fn get_video_extensions() -> Vec<&'static str> {
-    vec!["mp4", "avi", "mov", "mkv", "wmv", "flv", "webm", "m4v", "ts"]
+    vec![
+        "mp4", "avi", "mov", "mkv", "wmv", "flv", "webm", "m4v", "ts",
+    ]
 }
 
 /// Get video framerate using ffprobe
@@ -101,7 +103,12 @@ fn get_audio_codec_args(input_path: &str) -> Result<Vec<String>, String> {
     if needs_reencoding {
         // Check for advanced audio that needs special handling
         if let Ok(Some(layout)) = check_if_advanced_audio_reencoding_needed(input_path) {
-            let mut args = vec!["-c:a".to_string(), "aac".to_string(), "-b:a".to_string(), "256k".to_string()];
+            let mut args = vec![
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                "256k".to_string(),
+            ];
 
             // Handle different channel layouts
             if layout == "5.1" {
@@ -124,10 +131,7 @@ fn get_audio_codec_args(input_path: &str) -> Result<Vec<String>, String> {
                 ]);
             } else {
                 // Downmix to stereo for other layouts
-                args.extend(vec![
-                    "-ac".to_string(),
-                    "2".to_string(),
-                ]);
+                args.extend(vec!["-ac".to_string(), "2".to_string()]);
             }
 
             return Ok(args);
@@ -184,10 +188,7 @@ pub fn export_clip(
     // Key optimization: -ss BEFORE -i for fast seeking
     let mut cmd = Command::new("ffmpeg");
 
-    cmd.arg("-ss")
-        .arg(&start_time)
-        .arg("-i")
-        .arg(input_path);
+    cmd.arg("-ss").arg(&start_time).arg("-i").arg(input_path);
 
     if is_ts_file {
         // For TS files: use vsync cfr
