@@ -63,7 +63,9 @@ impl ControlsWindow {
             let app_state = cx.global::<AppState>();
             let video_player = app_state.video_player.clone();
             let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
-
+            cx.update_global::<AppState, _>(|state, _| {
+                state.display_subtitles = *checked;
+            });
             if let Ok(player) = video_player.lock() {
                 if let Err(e) = player.set_subtitle_display(*checked, selected_track) {
                     eprintln!("Failed to set subtitle display: {}", e);

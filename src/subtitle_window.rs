@@ -38,9 +38,9 @@ pub struct SubtitleWindow {
 /// Type of context menu to display
 #[derive(Clone, Copy, PartialEq)]
 pub enum ContextMenuType {
-    SubtitleEntry,  // Right-click on subtitle entry
-    StartTime,      // Right-click on start timestamp
-    EndTime,        // Right-click on end timestamp
+    SubtitleEntry, // Right-click on subtitle entry
+    StartTime,     // Right-click on start timestamp
+    EndTime,       // Right-click on end timestamp
 }
 
 /// State for the right-click context menu
@@ -118,20 +118,22 @@ impl SubtitleWindow {
 
             // Update AppState with the selected subtitle track
             cx.update_global::<AppState, _>(|state, _| {
-                state.selected_subtitle_track = Some(*index);
+                state.selected_subtitle_track = Some(*index + 1);
             });
 
             // If subtitle display is enabled in controls, update the video player
             let app_state = cx.global::<AppState>();
-            let video_player = app_state.video_player.clone();
+            if app_state.display_subtitles {
+                let video_player = app_state.video_player.clone();
 
-            if let Ok(player) = video_player.lock() {
-                if let Err(e) = player.set_subtitle_track(*index as i32) {
-                    eprintln!("Failed to set subtitle track: {}", e);
-                }
-            } else {
-                eprintln!("Failed to lock video player for subtitle track change");
-            };
+                if let Ok(player) = video_player.lock() {
+                    if let Err(e) = player.set_subtitle_track((*index + 1) as i32) {
+                        eprintln!("Failed to set subtitle track: {}", e);
+                    }
+                } else {
+                    eprintln!("Failed to lock video player for subtitle track change");
+                };
+            }
         })
         .detach();
 
