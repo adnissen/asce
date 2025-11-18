@@ -11,6 +11,7 @@ use clap::Parser;
 mod checkbox;
 mod controls_window;
 mod ffmpeg_export;
+mod font_utils;
 mod initial_window;
 mod platform;
 mod search_input;
@@ -29,7 +30,6 @@ use gpui::{
     MenuItem, PathPromptOptions, SystemMenuType, WindowOptions,
 };
 use initial_window::InitialWindow;
-use raw_window_handle::RawWindowHandle;
 use unified_window::UnifiedWindow;
 
 use std::sync::{Arc, Mutex};
@@ -168,6 +168,28 @@ fn extract_and_set_display_handle(cx: &mut App) -> Option<usize> {
     }
 }
 
+/// Subtitle styling settings
+#[derive(Clone, Debug)]
+pub struct SubtitleSettings {
+    pub font_family: String,
+    pub font_size: f64,
+    pub bold: bool,
+    pub italic: bool,
+    pub color: String,
+}
+
+impl SubtitleSettings {
+    fn default() -> Self {
+        Self {
+            font_family: "Arial".to_string(),
+            font_size: 55.0,
+            bold: false,
+            italic: false,
+            color: "#FFFFFF".to_string(),
+        }
+    }
+}
+
 pub struct AppState {
     pub file_path: Option<String>,
     pub initial_window: Option<AnyWindowHandle>,
@@ -177,6 +199,7 @@ pub struct AppState {
     pub synced_to_video: bool,
     pub selected_subtitle_track: Option<usize>, // Currently selected subtitle track index
     pub display_subtitles: bool,
+    pub subtitle_settings: SubtitleSettings,
 }
 
 impl AppState {
@@ -190,6 +213,7 @@ impl AppState {
             synced_to_video: true,            // Default to checked/synced
             selected_subtitle_track: Some(0), // No track selected initially
             display_subtitles: false,
+            subtitle_settings: SubtitleSettings::default(),
         }
     }
 

@@ -52,7 +52,10 @@ pub fn detect_subtitle_streams(file_path: &str) -> Vec<SubtitleStream> {
     };
 
     if !output.status.success() {
-        eprintln!("ffprobe failed: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "ffprobe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return Vec::new();
     }
 
@@ -127,7 +130,12 @@ fn format_display_title(index: usize, codec_name: &str, language: &Option<String
     };
 
     match language {
-        Some(lang) => format!("Subtitle {} - {} ({})", index + 1, lang.to_uppercase(), codec_display),
+        Some(lang) => format!(
+            "Subtitle {} - {} ({})",
+            index + 1,
+            lang.to_uppercase(),
+            codec_display
+        ),
         None => format!("Subtitle {} ({})", index + 1, codec_display),
     }
 }
@@ -153,8 +161,7 @@ mod tests {
 
     #[test]
     fn test_filter_non_text_subtitles() {
-        let json =
-            r#"{"streams": [{"codec_name": "subrip", "tags": {}}, {"codec_name": "dvd_subtitle", "tags": {}}]}"#;
+        let json = r#"{"streams": [{"codec_name": "subrip", "tags": {}}, {"codec_name": "dvd_subtitle", "tags": {}}]}"#;
         let streams = parse_ffprobe_json(json);
         assert_eq!(streams.len(), 1);
     }

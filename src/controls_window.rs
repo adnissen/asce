@@ -2,6 +2,8 @@ use gpui::{div, prelude::*, px, rgb, Context, Entity, IntoElement, MouseButton, 
 use std::time::Instant;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
+use crate::font_utils;
+use crate::select::{DropdownDirection, Select, SelectEvent, SelectState};
 use crate::slider::{Slider, SliderEvent, SliderState, SliderValue};
 use crate::time_input::TimeInput;
 use crate::video_player::ClockTime;
@@ -13,6 +15,11 @@ pub struct ControlsWindow {
     display_subtitles: Entity<CheckboxState>,
     clip_start_input: Entity<TimeInput>,
     clip_end_input: Entity<TimeInput>,
+    // Subtitle styling controls
+    subtitle_font_select: Entity<SelectState<String>>,
+    subtitle_font_size_slider: Entity<SliderState>,
+    subtitle_bold_checkbox: Entity<CheckboxState>,
+    subtitle_italic_checkbox: Entity<CheckboxState>,
     current_position: f32,
     duration: f32,
     is_playing: bool,
@@ -80,11 +87,124 @@ impl ControlsWindow {
         let clip_start_input = cx.new(|cx| TimeInput::new(cx));
         let clip_end_input = cx.new(|cx| TimeInput::new(cx));
 
+        // Get system fonts for the font selector
+        let system_fonts = font_utils::get_system_fonts();
+
+        // Create subtitle font selector (default to Arial which should be first or near first in list)
+        let subtitle_font_select = cx.new(|cx| {
+            let mut state = SelectState::new(system_fonts.clone());
+            // Set default to first font (Arial)
+            state.set_selected_index(Some(0), cx);
+            state
+        });
+
+        // Subscribe to font selection changes
+        cx.subscribe(
+            &subtitle_font_select,
+            |_this, state_entity, event: &SelectEvent, cx| {
+                let SelectEvent::Change(_index) = event;
+                let font_name = {
+                    let state = state_entity.read(cx);
+                    state.selected_item().cloned()
+                };
+
+                if let Some(font_name) = font_name {
+                    let video_player = cx.global::<AppState>().video_player.clone();
+                    cx.update_global::<AppState, _>(|state, _| {
+                        state.subtitle_settings.font_family = font_name.clone();
+                    });
+                    if let Ok(player) = video_player.lock() {
+                        if let Err(e) = player.set_subtitle_font(&font_name) {
+                            eprintln!("Failed to set subtitle font: {}", e);
+                        }
+                    };
+                }
+            },
+        )
+        .detach();
+
+        // Create subtitle font size slider (20-100)
+        let subtitle_font_size_slider = cx.new(|_cx| {
+            SliderState::new()
+                .min(20.0)
+                .max(100.0)
+                .step(1.0)
+                .default_value(55.0)
+        });
+
+        // Subscribe to font size changes
+        cx.subscribe(
+            &subtitle_font_size_slider,
+            |_this, _, event: &SliderEvent, cx| {
+                let SliderEvent::Change(value) = event;
+                let size = value.end();
+                let app_state = cx.global::<AppState>();
+                let video_player = app_state.video_player.clone();
+                cx.update_global::<AppState, _>(|state, _| {
+                    state.subtitle_settings.font_size = size as f64;
+                });
+                if let Ok(player) = video_player.lock() {
+                    if let Err(e) = player.set_subtitle_font_size(size as f64) {
+                        eprintln!("Failed to set subtitle font size: {}", e);
+                    }
+                };
+            },
+        )
+        .detach();
+
+        // Create subtitle bold checkbox
+        let subtitle_bold_checkbox = cx.new(|_cx| CheckboxState::new(false));
+
+        // Subscribe to bold checkbox changes
+        cx.subscribe(
+            &subtitle_bold_checkbox,
+            |_this, _, event: &CheckboxEvent, cx| {
+                let CheckboxEvent::Change(enabled) = event;
+                let app_state = cx.global::<AppState>();
+                let video_player = app_state.video_player.clone();
+                cx.update_global::<AppState, _>(|state, _| {
+                    state.subtitle_settings.bold = *enabled;
+                });
+                if let Ok(player) = video_player.lock() {
+                    if let Err(e) = player.set_subtitle_bold(*enabled) {
+                        eprintln!("Failed to set subtitle bold: {}", e);
+                    }
+                };
+            },
+        )
+        .detach();
+
+        // Create subtitle italic checkbox
+        let subtitle_italic_checkbox = cx.new(|_cx| CheckboxState::new(false));
+
+        // Subscribe to italic checkbox changes
+        cx.subscribe(
+            &subtitle_italic_checkbox,
+            |_this, _, event: &CheckboxEvent, cx| {
+                let CheckboxEvent::Change(enabled) = event;
+                let app_state = cx.global::<AppState>();
+                let video_player = app_state.video_player.clone();
+                cx.update_global::<AppState, _>(|state, _| {
+                    state.subtitle_settings.italic = *enabled;
+                });
+                if let Ok(player) = video_player.lock() {
+                    if let Err(e) = player.set_subtitle_italic(*enabled) {
+                        eprintln!("Failed to set subtitle italic: {}", e);
+                    }
+                };
+            },
+        )
+        .detach();
+
         Self {
             slider_state,
             display_subtitles,
             clip_start_input,
             clip_end_input,
+            subtitle_font_select,
+            subtitle_font_size_slider,
+            subtitle_bold_checkbox,
+            subtitle_italic_checkbox,
             current_position: 0.0,
             duration: 0.0,
             is_playing: false,
@@ -776,11 +896,216 @@ impl Render for ControlsWindow {
                                     .child("Play Clip")
                             }),
                     )
-                    // Right side: Display subtitles checkbox
+                    // Right side: Display subtitles checkbox and styling controls
                     .child(
-                        div().w(px(150.0)).child(
-                            Checkbox::new(&self.display_subtitles).label("Display subtitles"),
-                        ),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .p_2()
+                            .bg(rgb(0x1a1a1a))
+                            .border_1()
+                            .border_color(rgb(0x333333))
+                            .rounded(px(4.))
+                            .min_w(px(250.0))
+                            // Top row: Display subtitles, Bold, Italic checkboxes
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        Checkbox::new(&self.display_subtitles)
+                                            .label("Display subtitles"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .size(px(14.0))
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .bg(
+                                                                if self
+                                                                    .subtitle_bold_checkbox
+                                                                    .read(cx)
+                                                                    .is_checked()
+                                                                {
+                                                                    rgb(0x4caf50)
+                                                                } else {
+                                                                    rgb(0x2d2d2d)
+                                                                },
+                                                            )
+                                                            .border_1()
+                                                            .border_color(rgb(0x444444))
+                                                            .rounded(px(2.))
+                                                            .cursor_pointer()
+                                                            .hover(|style| {
+                                                                style.bg(
+                                                                    if self
+                                                                        .subtitle_bold_checkbox
+                                                                        .read(cx)
+                                                                        .is_checked()
+                                                                    {
+                                                                        rgb(0x66bb6a)
+                                                                    } else {
+                                                                        rgb(0x353535)
+                                                                    },
+                                                                )
+                                                            })
+                                                            .on_mouse_down(
+                                                                MouseButton::Left,
+                                                                window.listener_for(
+                                                                    &self.subtitle_bold_checkbox,
+                                                                    |state, _, _, cx| {
+                                                                        let new_value =
+                                                                            !state.is_checked();
+                                                                        state.set_checked(
+                                                                            new_value, cx,
+                                                                        );
+                                                                    },
+                                                                ),
+                                                            )
+                                                            .when(
+                                                                self.subtitle_bold_checkbox
+                                                                    .read(cx)
+                                                                    .is_checked(),
+                                                                |el| {
+                                                                    el.child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .text_color(rgb(
+                                                                                0xffffff,
+                                                                            ))
+                                                                            .child("✓"),
+                                                                    )
+                                                                },
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(rgb(0xcccccc))
+                                                            .child("Bold"),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .size(px(14.0))
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .bg(
+                                                                if self
+                                                                    .subtitle_italic_checkbox
+                                                                    .read(cx)
+                                                                    .is_checked()
+                                                                {
+                                                                    rgb(0x4caf50)
+                                                                } else {
+                                                                    rgb(0x2d2d2d)
+                                                                },
+                                                            )
+                                                            .border_1()
+                                                            .border_color(rgb(0x444444))
+                                                            .rounded(px(2.))
+                                                            .cursor_pointer()
+                                                            .hover(|style| {
+                                                                style.bg(
+                                                                    if self
+                                                                        .subtitle_italic_checkbox
+                                                                        .read(cx)
+                                                                        .is_checked()
+                                                                    {
+                                                                        rgb(0x66bb6a)
+                                                                    } else {
+                                                                        rgb(0x353535)
+                                                                    },
+                                                                )
+                                                            })
+                                                            .on_mouse_down(
+                                                                MouseButton::Left,
+                                                                window.listener_for(
+                                                                    &self.subtitle_italic_checkbox,
+                                                                    |state, _, _, cx| {
+                                                                        let new_value =
+                                                                            !state.is_checked();
+                                                                        state.set_checked(
+                                                                            new_value, cx,
+                                                                        );
+                                                                    },
+                                                                ),
+                                                            )
+                                                            .when(
+                                                                self.subtitle_italic_checkbox
+                                                                    .read(cx)
+                                                                    .is_checked(),
+                                                                |el| {
+                                                                    el.child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .text_color(rgb(
+                                                                                0xffffff,
+                                                                            ))
+                                                                            .child("✓"),
+                                                                    )
+                                                                },
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(rgb(0xcccccc))
+                                                            .child("Italic"),
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                            // Font selector and size slider
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_start()
+                                    .gap_2()
+                                    .child(
+                                        div().flex_1().child(
+                                            Select::new(&self.subtitle_font_select)
+                                                .direction(DropdownDirection::Up),
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(div().text_xs().text_color(rgb(0xcccccc)).child(
+                                                format!(
+                                                        "Size: {:.0}",
+                                                        self.subtitle_font_size_slider
+                                                            .read(cx)
+                                                            .get_value()
+                                                            .end()
+                                                    ),
+                                            ))
+                                            .child(Slider::new(&self.subtitle_font_size_slider))
+                                            .pt_neg_1(), //this moves the "size: x" and slider below it up ever so slightly to be even with the font dropdown
+                                    ),
+                            )
+                            .pb_neg_1(),
                     ),
             )
     }

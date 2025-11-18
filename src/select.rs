@@ -20,6 +20,13 @@ pub trait SelectItem: Clone + 'static {
     fn display_title(&self) -> String;
 }
 
+/// Implement SelectItem for String
+impl SelectItem for String {
+    fn display_title(&self) -> String {
+        self.clone()
+    }
+}
+
 /// State of the Select component
 pub struct SelectState<T: SelectItem> {
     items: Vec<T>,
@@ -55,8 +62,7 @@ impl<T: SelectItem> SelectState<T> {
 
     /// Get the selected item
     pub fn selected_item(&self) -> Option<&T> {
-        self.selected_index
-            .and_then(|idx| self.items.get(idx))
+        self.selected_index.and_then(|idx| self.items.get(idx))
     }
 
     /// Update the items list
@@ -105,11 +111,19 @@ impl<T: SelectItem> Render for SelectState<T> {
     }
 }
 
+/// Direction the dropdown menu opens
+#[derive(Clone, Copy, PartialEq)]
+pub enum DropdownDirection {
+    Down,
+    Up,
+}
+
 /// A Select dropdown element
 #[derive(IntoElement)]
 pub struct Select<T: SelectItem> {
     state: Entity<SelectState<T>>,
     placeholder: String,
+    direction: DropdownDirection,
     style: StyleRefinement,
 }
 
@@ -119,6 +133,7 @@ impl<T: SelectItem> Select<T> {
         Self {
             state: state.clone(),
             placeholder: "Select...".to_string(),
+            direction: DropdownDirection::Down,
             style: StyleRefinement::default(),
         }
     }
@@ -126,6 +141,12 @@ impl<T: SelectItem> Select<T> {
     /// Set the placeholder text
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    /// Set the dropdown direction
+    pub fn direction(mut self, direction: DropdownDirection) -> Self {
+        self.direction = direction;
         self
     }
 }
@@ -160,12 +181,12 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px_3()
-                    .py_2()
+                    .px_2()
+                    .py_1()
                     .bg(rgb(0x2d2d2d))
                     .border_1()
                     .border_color(rgb(0x444444))
-                    .rounded(px(4.))
+                    .rounded(px(3.))
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(0x353535)))
                     .on_mouse_down(
@@ -176,63 +197,76 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .text_xs()
                             .text_color(rgb(0xffffff))
                             .child(selected_title),
                     )
                     .child(
                         // Dropdown arrow
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x999999))
-                            .child(if is_open { "▲" } else { "▼" }),
+                        div().text_xs().text_color(rgb(0x999999)).child(if is_open {
+                            match self.direction {
+                                DropdownDirection::Down => "▲",
+                                DropdownDirection::Up => "▼",
+                            }
+                        } else {
+                            match self.direction {
+                                DropdownDirection::Down => "▼",
+                                DropdownDirection::Up => "▲",
+                            }
+                        }),
                     ),
             )
             .when(is_open, |el| {
                 // Dropdown menu
-                el.child(
-                    div()
-                        .id("select-menu")
-                        .left(px(0.))
-                        .w_full()
-                        .max_h(px(300.))
-                        .overflow_y_scroll()
-                        .bg(rgb(0x1a1a1a)) // Fully opaque dark background
-                        .border_1()
-                        .border_color(rgb(0x444444))
-                        .rounded(px(4.))
-                        .shadow_lg()
-                        .occlude()
-                        .children(items.iter().enumerate().map(|(idx, item)| {
-                            let is_selected = selected_index == Some(idx);
-                            let state_clone = self.state.clone();
+                let menu = div()
+                    .id("select-menu")
+                    .absolute()
+                    .left(px(0.))
+                    .w_full()
+                    .max_h(px(300.))
+                    .overflow_y_scroll()
+                    .bg(rgb(0x1a1a1a)) // Fully opaque dark background
+                    .border_1()
+                    .border_color(rgb(0x444444))
+                    .rounded(px(4.))
+                    .shadow_lg()
+                    .occlude();
 
+                let menu = match self.direction {
+                    DropdownDirection::Down => menu.top_full().mt_1(),
+                    DropdownDirection::Up => menu.bottom_full().mb_1(),
+                };
+
+                el.child(menu.children(items.iter().enumerate().map(|(idx, item)| {
+                    let is_selected = selected_index == Some(idx);
+                    let state_clone = self.state.clone();
+
+                    div()
+                        .id(("select-item", idx))
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .w_full()
+                        .opacity(1.0)
+                        .bg(rgb(0x1a1a1a)) // Fully opaque background for all items
+                        .when(is_selected, |style| style.bg(rgb(0x4caf50)))
+                        .when(!is_selected, |style| style.hover(|s| s.bg(rgb(0x2d2d2d))))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            window.listener_for(
+                                &state_clone,
+                                move |state, _: &MouseDownEvent, _, cx| {
+                                    state.select_item(idx, cx);
+                                },
+                            ),
+                        )
+                        .child(
                             div()
-                                .id(("select-item", idx))
-                                .px_3()
-                                .py_2()
-                                .cursor_pointer()
-                                .w_full()
-                                .opacity(1.0)
-                                .bg(rgb(0x1a1a1a)) // Fully opaque background for all items
-                                .when(is_selected, |style| style.bg(rgb(0x4caf50)))
-                                .when(!is_selected, |style| {
-                                    style.hover(|s| s.bg(rgb(0x2d2d2d)))
-                                })
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    window.listener_for(&state_clone, move |state, _: &MouseDownEvent, _, cx| {
-                                        state.select_item(idx, cx);
-                                    }),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(rgb(0xffffff))
-                                        .child(item.display_title()),
-                                )
-                        })),
-                )
+                                .text_xs()
+                                .text_color(rgb(0xffffff))
+                                .child(item.display_title()),
+                        )
+                })))
             })
     }
 }

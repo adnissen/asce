@@ -377,12 +377,18 @@ impl VideoPlayer {
             gl::load_with(|name| {
                 let name_c = CString::new(name).unwrap();
                 let symbol = core_foundation::string::CFString::new(name);
-                let framework = core_foundation::string::CFString::from_static_string("com.apple.opengl");
-                let bundle = core_foundation::bundle::CFBundleGetBundleWithIdentifier(framework.as_concrete_TypeRef());
+                let framework =
+                    core_foundation::string::CFString::from_static_string("com.apple.opengl");
+                let bundle = core_foundation::bundle::CFBundleGetBundleWithIdentifier(
+                    framework.as_concrete_TypeRef(),
+                );
                 if bundle.is_null() {
                     return std::ptr::null();
                 }
-                core_foundation::bundle::CFBundleGetFunctionPointerForName(bundle, symbol.as_concrete_TypeRef()) as *const std::ffi::c_void
+                core_foundation::bundle::CFBundleGetFunctionPointerForName(
+                    bundle,
+                    symbol.as_concrete_TypeRef(),
+                ) as *const std::ffi::c_void
             });
 
             println!("VideoPlayer: OpenGL functions loaded");
@@ -402,7 +408,10 @@ impl VideoPlayer {
     pub fn set_window_handle(&mut self, handle: usize) {
         unsafe {
             let hwnd = HWND(handle as isize as *mut _);
-            println!("VideoPlayer: Setting up OpenGL 3.2 context for HWND: {:?}", hwnd);
+            println!(
+                "VideoPlayer: Setting up OpenGL 3.2 context for HWND: {:?}",
+                hwnd
+            );
 
             // Get device context
             let hdc = GetDC(Some(hwnd));
@@ -498,9 +507,12 @@ impl VideoPlayer {
                 const WGL_CONTEXT_CORE_PROFILE_BIT_ARB: i32 = 0x00000001;
 
                 let attribs = [
-                    WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
-                    WGL_CONTEXT_MINOR_VERSION_ARB, 2,
-                    WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+                    WGL_CONTEXT_MAJOR_VERSION_ARB,
+                    3,
+                    WGL_CONTEXT_MINOR_VERSION_ARB,
+                    2,
+                    WGL_CONTEXT_PROFILE_MASK_ARB,
+                    WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
                     0, // Null terminator
                 ];
 
@@ -531,7 +543,9 @@ impl VideoPlayer {
             }
 
             // Query and print OpenGL version
-            let version_ptr = windows::Win32::Graphics::OpenGL::glGetString(windows::Win32::Graphics::OpenGL::GL_VERSION);
+            let version_ptr = windows::Win32::Graphics::OpenGL::glGetString(
+                windows::Win32::Graphics::OpenGL::GL_VERSION,
+            );
             if !version_ptr.is_null() {
                 let version = std::ffi::CStr::from_ptr(version_ptr as *const i8);
                 println!("OpenGL version: {:?}", version);
@@ -540,7 +554,9 @@ impl VideoPlayer {
             }
 
             // Query renderer info
-            let renderer_ptr = windows::Win32::Graphics::OpenGL::glGetString(windows::Win32::Graphics::OpenGL::GL_RENDERER);
+            let renderer_ptr = windows::Win32::Graphics::OpenGL::glGetString(
+                windows::Win32::Graphics::OpenGL::GL_RENDERER,
+            );
             if !renderer_ptr.is_null() {
                 let renderer = std::ffi::CStr::from_ptr(renderer_ptr as *const i8);
                 println!("OpenGL renderer: {:?}", renderer);
@@ -550,12 +566,19 @@ impl VideoPlayer {
             gl::load_with(|name| {
                 let name_c = CString::new(name).unwrap();
                 // Try wglGetProcAddress first (for extensions)
-                if let Some(proc) = wglGetProcAddress(windows::core::PCSTR(name_c.as_ptr() as *const u8)) {
+                if let Some(proc) =
+                    wglGetProcAddress(windows::core::PCSTR(name_c.as_ptr() as *const u8))
+                {
                     return proc as *const std::ffi::c_void;
                 }
                 // Fall back to GetProcAddress from opengl32.dll (for core functions)
-                if let Ok(opengl_module) = windows::Win32::System::LibraryLoader::GetModuleHandleA(windows::core::s!("opengl32.dll")) {
-                    if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(opengl_module, windows::core::PCSTR(name_c.as_ptr() as *const u8)) {
+                if let Ok(opengl_module) = windows::Win32::System::LibraryLoader::GetModuleHandleA(
+                    windows::core::s!("opengl32.dll"),
+                ) {
+                    if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
+                        opengl_module,
+                        windows::core::PCSTR(name_c.as_ptr() as *const u8),
+                    ) {
                         return proc as *const std::ffi::c_void;
                     }
                 }
@@ -570,7 +593,10 @@ impl VideoPlayer {
             // CRITICAL: Release the context from the main thread so the render thread can use it
             // OpenGL contexts can only be current on one thread at a time
             if let Err(e) = wglMakeCurrent(HDC(std::ptr::null_mut()), HGLRC(std::ptr::null_mut())) {
-                eprintln!("Warning: Failed to release OpenGL context from main thread: {:?}", e);
+                eprintln!(
+                    "Warning: Failed to release OpenGL context from main thread: {:?}",
+                    e
+                );
             } else {
                 println!("OpenGL context released from main thread");
             }
@@ -590,8 +616,10 @@ impl VideoPlayer {
     /// Create FBO and texture for off-screen rendering
     fn create_fbo(&mut self) {
         unsafe {
-            println!("VideoPlayer: Creating FBO for off-screen rendering ({}x{})",
-                self.video_width, self.video_height);
+            println!(
+                "VideoPlayer: Creating FBO for off-screen rendering ({}x{})",
+                self.video_width, self.video_height
+            );
 
             // Generate framebuffer
             let mut fbo: u32 = 0;
@@ -635,7 +663,10 @@ impl VideoPlayer {
             if status != gl::FRAMEBUFFER_COMPLETE {
                 eprintln!("VideoPlayer: FBO is not complete! Status: 0x{:X}", status);
             } else {
-                println!("VideoPlayer: FBO created successfully (ID: {}, Texture: {})", fbo, texture);
+                println!(
+                    "VideoPlayer: FBO created successfully (ID: {}, Texture: {})",
+                    fbo, texture
+                );
             }
 
             // Unbind FBO
@@ -671,7 +702,8 @@ impl VideoPlayer {
                         use core_foundation::string::CFString;
 
                         let framework = CFString::from_static_string("com.apple.opengl");
-                        let bundle = CFBundleGetBundleWithIdentifier(framework.as_concrete_TypeRef());
+                        let bundle =
+                            CFBundleGetBundleWithIdentifier(framework.as_concrete_TypeRef());
                         if bundle.is_null() {
                             return ptr::null_mut();
                         }
@@ -683,19 +715,25 @@ impl VideoPlayer {
 
                     #[cfg(target_os = "windows")]
                     {
+                        use windows::core::{s, PCSTR};
                         use windows::Win32::Graphics::OpenGL::wglGetProcAddress;
-                        use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
-                        use windows::core::{PCSTR, s};
+                        use windows::Win32::System::LibraryLoader::{
+                            GetModuleHandleA, GetProcAddress,
+                        };
 
                         // First try wglGetProcAddress for extension functions
-                        let addr = wglGetProcAddress(PCSTR(symbol_name_cstring.as_ptr() as *const u8));
+                        let addr =
+                            wglGetProcAddress(PCSTR(symbol_name_cstring.as_ptr() as *const u8));
                         if let Some(proc) = addr {
                             return proc as *mut c_void;
                         }
 
                         // Fall back to GetProcAddress from opengl32.dll for core functions
                         if let Ok(opengl_module) = GetModuleHandleA(s!("opengl32.dll")) {
-                            if let Some(proc) = GetProcAddress(opengl_module, PCSTR(symbol_name_cstring.as_ptr() as *const u8)) {
+                            if let Some(proc) = GetProcAddress(
+                                opengl_module,
+                                PCSTR(symbol_name_cstring.as_ptr() as *const u8),
+                            ) {
                                 return proc as *mut c_void;
                             }
                         }
@@ -748,7 +786,10 @@ impl VideoPlayer {
                 let hglrc = HGLRC(gl_ctx.hglrc as *mut _);
 
                 if let Err(e) = wglMakeCurrent(hdc, hglrc) {
-                    eprintln!("Failed to make context current for render context creation: {:?}", e);
+                    eprintln!(
+                        "Failed to make context current for render context creation: {:?}",
+                        e
+                    );
                     return;
                 }
                 println!("Temporarily made OpenGL context current for mpv initialization");
@@ -771,8 +812,13 @@ impl VideoPlayer {
             // On Windows, release the context so the render thread can use it
             #[cfg(target_os = "windows")]
             {
-                if let Err(e) = wglMakeCurrent(HDC(std::ptr::null_mut()), HGLRC(std::ptr::null_mut())) {
-                    eprintln!("Warning: Failed to release context after render context creation: {:?}", e);
+                if let Err(e) =
+                    wglMakeCurrent(HDC(std::ptr::null_mut()), HGLRC(std::ptr::null_mut()))
+                {
+                    eprintln!(
+                        "Warning: Failed to release context after render context creation: {:?}",
+                        e
+                    );
                 } else {
                     println!("Released OpenGL context after mpv initialization");
                 }
@@ -810,13 +856,24 @@ impl VideoPlayer {
             let gl_ctx = self.gl_context.as_ref().unwrap().clone();
             let shutdown = Arc::clone(&self.shutdown);
             let needs_render = Arc::clone(&self.needs_render);
-            let fbo_id = self.fbo_id.expect("FBO must be created before starting render thread");
+            let fbo_id = self
+                .fbo_id
+                .expect("FBO must be created before starting render thread");
             let frame_buffer = Arc::clone(&self.frame_buffer);
             let video_width = self.video_width;
             let video_height = self.video_height;
 
             let render_thread = thread::spawn(move || {
-                Self::render_loop(render_ctx, gl_ctx, shutdown, needs_render, fbo_id, frame_buffer, video_width, video_height);
+                Self::render_loop(
+                    render_ctx,
+                    gl_ctx,
+                    shutdown,
+                    needs_render,
+                    fbo_id,
+                    frame_buffer,
+                    video_width,
+                    video_height,
+                );
             });
 
             self.render_thread = Some(render_thread);
@@ -911,11 +968,17 @@ impl VideoPlayer {
 
                 frame_count += 1;
                 if frame_count % 60 == 0 {
-                    println!("VideoPlayer: Rendered {} frames ({}x{})", frame_count, video_width, video_height);
+                    println!(
+                        "VideoPlayer: Rendered {} frames ({}x{})",
+                        frame_count, video_width, video_height
+                    );
                 }
             }
 
-            println!("VideoPlayer: Render loop exiting (rendered {} frames)", frame_count);
+            println!(
+                "VideoPlayer: Render loop exiting (rendered {} frames)",
+                frame_count
+            );
         }
     }
 
@@ -1011,11 +1074,17 @@ impl VideoPlayer {
 
                 frame_count += 1;
                 if frame_count % 60 == 0 {
-                    println!("VideoPlayer: Rendered {} frames ({}x{})", frame_count, video_width, video_height);
+                    println!(
+                        "VideoPlayer: Rendered {} frames ({}x{})",
+                        frame_count, video_width, video_height
+                    );
                 }
             }
 
-            println!("VideoPlayer: Render loop exiting (rendered {} frames)", frame_count);
+            println!(
+                "VideoPlayer: Render loop exiting (rendered {} frames)",
+                frame_count
+            );
         }
     }
 
@@ -1154,6 +1223,36 @@ impl VideoPlayer {
         self.set_property_int("sid", track_index as i64)
     }
 
+    /// Set subtitle font family
+    pub fn set_subtitle_font(&self, font_name: &str) -> Result<(), VideoPlayerError> {
+        println!("VideoPlayer: Setting subtitle font to {}", font_name);
+        self.set_property_string("sub-font", font_name)
+    }
+
+    /// Set subtitle font size
+    pub fn set_subtitle_font_size(&self, size: f64) -> Result<(), VideoPlayerError> {
+        println!("VideoPlayer: Setting subtitle font size to {}", size);
+        self.set_property_double("sub-font-size", size)
+    }
+
+    /// Set subtitle bold
+    pub fn set_subtitle_bold(&self, enabled: bool) -> Result<(), VideoPlayerError> {
+        println!("VideoPlayer: Setting subtitle bold to {}", enabled);
+        self.set_property_flag("sub-bold", enabled)
+    }
+
+    /// Set subtitle italic
+    pub fn set_subtitle_italic(&self, enabled: bool) -> Result<(), VideoPlayerError> {
+        println!("VideoPlayer: Setting subtitle italic to {}", enabled);
+        self.set_property_flag("sub-italic", enabled)
+    }
+
+    /// Set subtitle color (hex format: "#RRGGBB" or "#RRGGBBAA")
+    pub fn set_subtitle_color(&self, color: &str) -> Result<(), VideoPlayerError> {
+        println!("VideoPlayer: Setting subtitle color to {}", color);
+        self.set_property_string("sub-color", color)
+    }
+
     /// Get pipeline reference (compatibility - returns None for mpv)
     pub fn get_pipeline(&self) -> Option<()> {
         None
@@ -1187,6 +1286,37 @@ impl VideoPlayer {
                 name_c.as_ptr(),
                 mpv_format_MPV_FORMAT_INT64,
                 &mut val as *mut i64 as *mut c_void,
+            );
+            if ret < 0 {
+                return Err(VideoPlayerError::MpvError(Self::error_string(ret)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Helper to set a string property
+    fn set_property_string(&self, name: &str, value: &str) -> Result<(), VideoPlayerError> {
+        unsafe {
+            let name_c = CString::new(name).unwrap();
+            let value_c = CString::new(value).unwrap();
+            let ret = mpv_set_property_string(self.mpv_handle.0, name_c.as_ptr(), value_c.as_ptr());
+            if ret < 0 {
+                return Err(VideoPlayerError::MpvError(Self::error_string(ret)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Helper to set a double property
+    fn set_property_double(&self, name: &str, value: f64) -> Result<(), VideoPlayerError> {
+        unsafe {
+            let name_c = CString::new(name).unwrap();
+            let mut val = value;
+            let ret = mpv_set_property(
+                self.mpv_handle.0,
+                name_c.as_ptr(),
+                mpv_format_MPV_FORMAT_DOUBLE,
+                &mut val as *mut f64 as *mut c_void,
             );
             if ret < 0 {
                 return Err(VideoPlayerError::MpvError(Self::error_string(ret)));
@@ -1275,7 +1405,10 @@ impl Drop for VideoPlayer {
                 gl::DeleteFramebuffers(1, &fbo_id);
                 gl::DeleteTextures(1, &texture_id);
 
-                println!("VideoPlayer: Cleaned up OpenGL FBO ({}) and texture ({})", fbo_id, texture_id);
+                println!(
+                    "VideoPlayer: Cleaned up OpenGL FBO ({}) and texture ({})",
+                    fbo_id, texture_id
+                );
             }
         }
 

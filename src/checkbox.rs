@@ -126,21 +126,11 @@ impl RenderOnce for Checkbox {
                         }),
                     )
                     .when(is_checked, |el| {
-                        el.child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(0xffffff))
-                                .child("✓"),
-                        )
+                        el.child(div().text_sm().text_color(rgb(0xffffff)).child("✓"))
                     }),
             )
             .when_some(self.label, |el, label| {
-                el.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(0xcccccc))
-                        .child(label),
-                )
+                el.child(div().text_sm().text_color(rgb(0xcccccc)).child(label))
             })
     }
 }

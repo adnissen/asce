@@ -3,9 +3,9 @@
 use std::ops::Range;
 
 use gpui::{
-    Along, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, EntityId, EventEmitter,
-    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Render, RenderOnce,
-    StyleRefinement, Styled, Window, canvas, div, prelude::*, px, rgb,
+    canvas, div, prelude::*, px, rgb, Along, App, Axis, Bounds, Context, DragMoveEvent, Empty,
+    Entity, EntityId, EventEmitter, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    Pixels, Point, Render, RenderOnce, StyleRefinement, Styled, Window,
 };
 
 #[derive(Clone)]
@@ -127,6 +127,10 @@ impl SliderState {
 
     pub fn get_max(&self) -> f32 {
         self.max
+    }
+
+    pub fn get_value(&self) -> SliderValue {
+        self.value
     }
 
     fn percentage_to_value(&self, percentage: f32) -> f32 {
@@ -263,9 +267,6 @@ impl RenderOnce for Slider {
         let state = self.state.read(cx);
         let bar_size = state.bounds.size.along(axis);
         let bar_end = state.percentage.end * bar_size;
-        let hover_info = state
-            .hover_position
-            .map(|p| (p, state.percentage_to_value(p)));
 
         let bar_color = rgb(0x4caf50);
         let thumb_color = rgb(0xffffff);
@@ -391,30 +392,6 @@ impl RenderOnce for Slider {
                                 )
                                 .absolute()
                                 .size_full()
-                            })
-                            .when_some(hover_info, |el, (percentage, value)| {
-                                let hover_pos = percentage * bar_size;
-                                let time_text = format_time(value);
-
-                                el.child(
-                                    div()
-                                        .id("slider-tooltip")
-                                        .absolute()
-                                        .bottom(px(20.))
-                                        .left(hover_pos)
-                                        .ml(-px(25.))
-                                        .px_2()
-                                        .py_1()
-                                        .bg(rgb(0x1a1a1a))
-                                        .border_1()
-                                        .border_color(rgb(0x444444))
-                                        .rounded(px(4.))
-                                        .shadow_lg()
-                                        .text_xs()
-                                        .text_color(rgb(0xffffff))
-                                        .whitespace_nowrap()
-                                        .child(time_text),
-                                )
                             }),
                     ),
             )
