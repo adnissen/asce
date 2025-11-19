@@ -915,8 +915,7 @@ impl Render for ControlsWindow {
                                     .items_center()
                                     .justify_between()
                                     .child(
-                                        Checkbox::new(&self.display_subtitles)
-                                            .label("Display subtitles"),
+                                        Checkbox::new(&self.display_subtitles).label("Subtitles"),
                                     )
                                     .child(
                                         div()
