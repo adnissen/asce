@@ -1,4 +1,14 @@
+use gpui::prelude::*;
 use gpui::*;
+
+#[cfg(target_os = "windows")]
+use raw_window_handle::HasWindowHandle;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::*;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub struct CustomTitlebar {
     title: SharedString,
@@ -8,6 +18,27 @@ impl CustomTitlebar {
     pub fn new(title: impl Into<SharedString>) -> Self {
         Self {
             title: title.into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn start_window_drag(window: &mut gpui::Window) {
+        // Get the raw window handle (HWND)
+        if let Ok(handle) = window.window_handle() {
+            if let raw_window_handle::RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                unsafe {
+                    let hwnd = HWND(win32_handle.hwnd.get() as _);
+                    // Release mouse capture to allow Windows to handle dragging
+                    let _ = ReleaseCapture();
+                    // Send WM_NCLBUTTONDOWN with HTCAPTION to start window dragging
+                    SendMessageW(
+                        hwnd,
+                        WM_NCLBUTTONDOWN,
+                        Some(WPARAM(HTCAPTION as usize)),
+                        Some(LPARAM(0)),
+                    );
+                }
+            }
         }
     }
 }
@@ -30,12 +61,13 @@ impl Render for CustomTitlebar {
             .border_b_1()
             .border_color(rgb(0x2d2d2d))
             .child(
-                // Left side: Title
+                // Left side: Title - this area is draggable on Windows
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .h_full()
+                    .flex_grow() // Take up remaining space to create a larger drag area
                     // macOS needs extra padding for traffic lights
                     .pl(if cfg!(target_os = "macos") {
                         px(74.0)
@@ -43,6 +75,15 @@ impl Render for CustomTitlebar {
                         px(16.0)
                     })
                     .pr_4()
+                    // Enable window dragging on Windows when clicking title area
+                    .when(cfg!(target_os = "windows"), |this| {
+                        this.on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(|_, _, window, _| {
+                                Self::start_window_drag(window);
+                            }),
+                        )
+                    })
                     .child(
                         div()
                             .text_xs()
@@ -74,10 +115,21 @@ impl Render for CustomTitlebar {
                                 window.minimize_window();
                             }))
                             .child(
-                                svg()
-                                    .path("M 0,5 H 10")
-                                    .size(px(10.0))
-                                    .text_color(rgb(0xcccccc)),
+                                // Use Unicode character on Windows, SVG on other platforms
+                                div()
+                                    .when(cfg!(target_os = "windows"), |this| {
+                                        this.text_size(px(16.0))
+                                            .text_color(rgb(0xcccccc))
+                                            .child("─")
+                                    })
+                                    .when(!cfg!(target_os = "windows"), |this| {
+                                        this.text_color(rgb(0xcccccc)).child(
+                                            svg()
+                                                .path("M 0,5 H 10")
+                                                .size(px(10.0))
+                                                .text_color(rgb(0xcccccc)),
+                                        )
+                                    }),
                             ),
                         // Maximize/Restore button
                         div()
@@ -93,10 +145,21 @@ impl Render for CustomTitlebar {
                                 window.zoom_window();
                             }))
                             .child(
-                                svg()
-                                    .path("M 0,0 H 10 V 10 H 0 Z M 0,1 H 10")
-                                    .size(px(10.0))
-                                    .text_color(rgb(0xcccccc)),
+                                // Use Unicode character on Windows, SVG on other platforms
+                                div()
+                                    .when(cfg!(target_os = "windows"), |this| {
+                                        this.text_size(px(14.0))
+                                            .text_color(rgb(0xcccccc))
+                                            .child("□")
+                                    })
+                                    .when(!cfg!(target_os = "windows"), |this| {
+                                        this.text_color(rgb(0xcccccc)).child(
+                                            svg()
+                                                .path("M 0,0 H 10 V 10 H 0 Z M 0,1 H 10")
+                                                .size(px(10.0))
+                                                .text_color(rgb(0xcccccc)),
+                                        )
+                                    }),
                             ),
                         // Close button
                         div()
@@ -112,10 +175,21 @@ impl Render for CustomTitlebar {
                                 window.remove_window();
                             }))
                             .child(
-                                svg()
-                                    .path("M 0,0 L 10,10 M 10,0 L 0,10")
-                                    .size(px(10.0))
-                                    .text_color(rgb(0xffffff)),
+                                // Use Unicode character on Windows, SVG on other platforms
+                                div()
+                                    .when(cfg!(target_os = "windows"), |this| {
+                                        this.text_size(px(14.0))
+                                            .text_color(rgb(0xffffff))
+                                            .child("✕")
+                                    })
+                                    .when(!cfg!(target_os = "windows"), |this| {
+                                        this.text_color(rgb(0xffffff)).child(
+                                            svg()
+                                                .path("M 0,0 L 10,10 M 10,0 L 0,10")
+                                                .size(px(10.0))
+                                                .text_color(rgb(0xffffff)),
+                                        )
+                                    }),
                             ),
                     ]),
             )
