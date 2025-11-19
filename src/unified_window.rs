@@ -5,6 +5,7 @@ use gpui::{
 use std::sync::{Arc, Mutex};
 
 use crate::controls_window::ControlsWindow;
+use crate::custom_titlebar::CustomTitlebar;
 use crate::platform;
 use crate::subtitle_window::SubtitleWindow;
 
@@ -12,6 +13,7 @@ use crate::subtitle_window::SubtitleWindow;
 /// The video area will have a child window/view created for mpv rendering
 /// (NSView on macOS, HWND on Windows)
 pub struct UnifiedWindow {
+    pub titlebar: Entity<CustomTitlebar>,
     pub controls: Entity<ControlsWindow>,
     pub subtitles: Entity<SubtitleWindow>,
     video_area_size: Size<gpui::Pixels>,
@@ -21,7 +23,21 @@ pub struct UnifiedWindow {
 
 impl UnifiedWindow {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        // Create the controls and subtitle views
+        // Get the file name from AppState for the titlebar
+        let app_state = cx.global::<crate::AppState>();
+        let file_name = app_state
+            .file_path
+            .as_ref()
+            .and_then(|path| {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "asve".to_string());
+
+        // Create the titlebar, controls, and subtitle views
+        let titlebar = cx.new(|_| CustomTitlebar::new(file_name));
         let controls = cx.new(|cx| ControlsWindow::new(cx));
         let subtitles = cx.new(|cx| SubtitleWindow::new(cx));
 
@@ -40,6 +56,7 @@ impl UnifiedWindow {
         // });
 
         Self {
+            titlebar,
             controls,
             subtitles,
             video_area_size: Size {
@@ -114,9 +131,11 @@ impl Render for UnifiedWindow {
         self.last_bounds = Some(window_bounds);
 
         // Calculate layout dimensions based on proportions
-        // Video section takes 75% of height, controls take 25%
-        let video_section_height = total_height * 0.75;
-        let controls_height = total_height * 0.25;
+        // Titlebar takes 37px, remaining height is split: 75% video, 25% controls
+        let titlebar_height = px(37.0);
+        let available_height = total_height - titlebar_height;
+        let video_section_height = available_height * 0.75;
+        let controls_height = available_height * 0.25;
 
         // Video takes 76% of width, subtitles take 24%
         let video_width = total_width * 0.76;
@@ -160,6 +179,8 @@ impl Render for UnifiedWindow {
                     });
                 }),
             )
+            // Custom titlebar
+            .child(self.titlebar.clone())
             // Top section: video (left) and subtitles (right)
             .child(
                 div()

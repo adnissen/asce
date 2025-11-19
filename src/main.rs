@@ -10,6 +10,7 @@ use clap::Parser;
 
 mod checkbox;
 mod controls_window;
+mod custom_titlebar;
 mod ffmpeg_export;
 mod font_utils;
 mod initial_window;
@@ -117,7 +118,8 @@ fn main() {
                 ))),
                 titlebar: Some(gpui::TitlebarOptions {
                     title: Some("asve".into()),
-                    appears_transparent: false,
+                    appears_transparent: true,
+                    traffic_light_position: Some(gpui::point(px(8.0), px(12.0))),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -125,7 +127,7 @@ fn main() {
 
             let window = cx
                 .open_window(initial_window_options, |_window, cx| {
-                    cx.new(|_| InitialWindow {})
+                    cx.new(|cx| InitialWindow::new(cx))
                 })
                 .unwrap();
 
@@ -304,7 +306,8 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
         is_movable: true,
         titlebar: Some(gpui::TitlebarOptions {
             title: Some(file_name.into()),
-            appears_transparent: false,
+            appears_transparent: true,
+            traffic_light_position: Some(gpui::point(px(8.0), px(12.0))),
             ..Default::default()
         }),
         ..Default::default()

@@ -1,9 +1,19 @@
-use gpui::{div, prelude::*, rgb, Context, IntoElement, PathPromptOptions, Render, Window};
+use gpui::{div, prelude::*, rgb, Context, Entity, IntoElement, PathPromptOptions, Render, Window};
 
+use crate::custom_titlebar::CustomTitlebar;
 use crate::ffmpeg_export;
 
 /// Initial window that shows just an "Open File" button
-pub struct InitialWindow;
+pub struct InitialWindow {
+    titlebar: Entity<CustomTitlebar>,
+}
+
+impl InitialWindow {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let titlebar = cx.new(|_| CustomTitlebar::new("asve"));
+        Self { titlebar }
+    }
+}
 
 impl Render for InitialWindow {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -12,9 +22,15 @@ impl Render for InitialWindow {
             .flex_col()
             .bg(rgb(0x1a1a1a))
             .size_full()
-            .justify_center()
-            .items_center()
+            .child(self.titlebar.clone())
             .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .justify_center()
+                    .items_center()
+                    .child(
                 div()
                     .id("open-file-button")
                     .px_8()
@@ -69,6 +85,7 @@ impl Render for InitialWindow {
                         .detach();
                     })
                     .child("Open File"),
+                    )
             )
     }
 }
