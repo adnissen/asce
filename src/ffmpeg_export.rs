@@ -157,6 +157,9 @@ fn get_audio_codec_args(input_path: &str) -> Result<Vec<String>, String> {
 /// * `output_path` - Path where the output clip should be saved
 /// * `start_secs` - Start time in seconds
 /// * `end_secs` - End time in seconds
+/// * `subtitle_settings` - Optional subtitle settings (font, size, bold, italic, color)
+/// * `display_subtitles` - Whether to include burned-in subtitles in the output
+/// * `subtitle_track` - Optional subtitle track index to burn in
 ///
 /// # Returns
 /// * `Ok(())` on success
@@ -166,6 +169,9 @@ pub fn export_clip(
     output_path: &str,
     start_secs: f32,
     end_secs: f32,
+    subtitle_settings: Option<&crate::SubtitleSettings>,
+    display_subtitles: bool,
+    subtitle_track: Option<usize>,
 ) -> Result<(), String> {
     // Calculate duration
     let duration = end_secs - start_secs;
@@ -184,6 +190,37 @@ pub fn export_clip(
     // Check if input is a .ts file for special handling
     let is_ts_file = input_path.ends_with(".ts");
 
+    // Build subtitle filter if needed
+    let subtitle_filter = if display_subtitles && subtitle_track.is_some() {
+        if let Some(settings) = subtitle_settings {
+            let track_idx = subtitle_track.unwrap();
+
+            // Convert hex color to FFmpeg format (remove # and convert to BGR format for ASS)
+            let color = settings.color.trim_start_matches('#');
+            // FFmpeg ASS uses BGR format with &H prefix, so we need to reverse RGB to BGR
+            let bgr_color = if color.len() == 6 {
+                format!("{}{}{}", &color[4..6], &color[2..4], &color[0..2])
+            } else {
+                color.to_string()
+            };
+
+            Some(format!(
+                "subtitles={}:si={}:force_style='FontName={},FontSize={},Bold={},Italic={},PrimaryColour=&H{}'",
+                input_path,
+                track_idx,
+                settings.font_family,
+                settings.font_size as i32,
+                if settings.bold { -1 } else { 0 },
+                if settings.italic { -1 } else { 0 },
+                bgr_color
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Build ffmpeg command matching atci clipper for maximum speed
     // Key optimization: -ss BEFORE -i for fast seeking
     let mut cmd = Command::new("ffmpeg");
@@ -192,11 +229,17 @@ pub fn export_clip(
 
     if is_ts_file {
         // For TS files: use vsync cfr
-        cmd.arg("-t")
-            .arg(&duration_time)
-            .arg("-vf")
-            .arg("format=yuv420p")
-            .arg("-c:v")
+        cmd.arg("-t").arg(&duration_time);
+
+        // Add subtitle filter if present, otherwise just format
+        if let Some(ref sub_filter) = subtitle_filter {
+            cmd.arg("-vf")
+                .arg(format!("{},format=yuv420p", sub_filter));
+        } else {
+            cmd.arg("-vf").arg("format=yuv420p");
+        }
+
+        cmd.arg("-c:v")
             .arg("libx264")
             .arg("-profile:v")
             .arg("baseline")
@@ -213,8 +256,14 @@ pub fn export_clip(
             .arg("-t")
             .arg(&duration_time)
             .arg("-frames:v")
-            .arg(frame_count.to_string())
-            .arg("-c:v")
+            .arg(frame_count.to_string());
+
+        // Add subtitle filter if present
+        if let Some(ref sub_filter) = subtitle_filter {
+            cmd.arg("-vf").arg(sub_filter);
+        }
+
+        cmd.arg("-c:v")
             .arg("libx264")
             .arg("-profile:v")
             .arg("baseline")
@@ -241,6 +290,115 @@ pub fn export_clip(
         .arg("-y")
         .arg("-map_chapters")
         .arg("-1")
+        .arg(output_path);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffmpeg failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Export a video clip as an animated GIF from start_secs to end_secs
+///
+/// Uses optimized settings from atci clipper:
+/// - 10fps for reasonable file size
+/// - Scale to 480px width with Lanczos filtering
+/// - Palette generation for better colors
+/// - Infinite loop
+///
+/// # Arguments
+/// * `input_path` - Path to the input video file
+/// * `output_path` - Path where the output GIF should be saved
+/// * `start_secs` - Start time in seconds
+/// * `end_secs` - End time in seconds
+/// * `subtitle_settings` - Optional subtitle settings (font, size, bold, italic, color)
+/// * `display_subtitles` - Whether to include subtitles in the GIF
+/// * `subtitle_track` - Optional subtitle track index to burn in
+///
+/// # Returns
+/// * `Ok(())` on success
+/// * `Err(String)` with error message on failure
+pub fn export_gif(
+    input_path: &str,
+    output_path: &str,
+    start_secs: f32,
+    end_secs: f32,
+    subtitle_settings: Option<&crate::SubtitleSettings>,
+    display_subtitles: bool,
+    subtitle_track: Option<usize>,
+) -> Result<(), String> {
+    // Calculate duration
+    let duration = end_secs - start_secs;
+
+    // Format timestamps for ffmpeg
+    let start_time = format!("{}", start_secs);
+    let duration_time = format!("{}", duration);
+
+    // Build the video filter (-vf) for GIF generation
+    // Key order from atci clipper: fps=10,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse
+    let mut filter_parts = Vec::new();
+
+    // Add subtitle filter if requested and settings provided
+    if display_subtitles && subtitle_track.is_some() {
+        if let Some(settings) = subtitle_settings {
+            let track_idx = subtitle_track.unwrap();
+
+            // Convert hex color to FFmpeg format (remove # and convert to BGR format for ASS)
+            let color = settings.color.trim_start_matches('#');
+            // FFmpeg ASS uses BGR format with &H prefix, so we need to reverse RGB to BGR
+            let bgr_color = if color.len() == 6 {
+                format!("{}{}{}", &color[4..6], &color[2..4], &color[0..2])
+            } else {
+                color.to_string()
+            };
+
+            // Build force_style string for subtitle styling
+            // Note: FFmpeg subtitles filter uses ASS/SSA style format
+            filter_parts.push(format!(
+                "subtitles={}:si={}:force_style='FontName={},FontSize={},Bold={},Italic={},PrimaryColour=&H{}'",
+                input_path,
+                track_idx,
+                settings.font_family,
+                settings.font_size as i32,
+                if settings.bold { -1 } else { 0 },
+                if settings.italic { -1 } else { 0 },
+                bgr_color
+            ));
+        }
+    }
+
+    // Add base filters: fps reduction and scaling
+    filter_parts.push("fps=10".to_string());
+    filter_parts.push("scale=480:-1:flags=lanczos".to_string());
+
+    // Add palette generation filter
+    // split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse
+    let vf_filter = format!(
+        "{},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+        filter_parts.join(",")
+    );
+
+    // Build ffmpeg command with correct argument order from atci clipper:
+    // -ss {start} -t {duration} -i {input} -vf {filter} -loop 0 -y {output}
+    let mut cmd = Command::new("ffmpeg");
+
+    cmd.arg("-ss")
+        .arg(&start_time)
+        .arg("-t")
+        .arg(&duration_time)
+        .arg("-i")
+        .arg(input_path)
+        .arg("-vf")
+        .arg(&vf_filter)
+        .arg("-loop")
+        .arg("0") // Infinite loop
+        .arg("-y") // Overwrite output file
         .arg(output_path);
 
     let output = cmd

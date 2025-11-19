@@ -20,6 +20,7 @@ pub struct ControlsWindow {
     subtitle_font_size_slider: Entity<SliderState>,
     subtitle_bold_checkbox: Entity<CheckboxState>,
     subtitle_italic_checkbox: Entity<CheckboxState>,
+    export_as_gif_checkbox: Entity<CheckboxState>,
     current_position: f32,
     duration: f32,
     is_playing: bool,
@@ -196,6 +197,9 @@ impl ControlsWindow {
         )
         .detach();
 
+        // Create export as GIF checkbox (unchecked by default)
+        let export_as_gif_checkbox = cx.new(|_cx| CheckboxState::new(false));
+
         Self {
             slider_state,
             display_subtitles,
@@ -205,6 +209,7 @@ impl ControlsWindow {
             subtitle_font_size_slider,
             subtitle_bold_checkbox,
             subtitle_italic_checkbox,
+            export_as_gif_checkbox,
             current_position: 0.0,
             duration: 0.0,
             is_playing: false,
@@ -369,21 +374,30 @@ impl ControlsWindow {
             }
         };
 
+        // Check if we should export as GIF
+        let export_as_gif = self.export_as_gif_checkbox.read(cx).is_checked();
+
         // Generate default output filename and directory
         let input_path_buf = std::path::PathBuf::from(&input_path);
         let directory = input_path_buf
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
 
+        // Use appropriate file extension based on export format
         let default_filename = input_path_buf
             .file_stem()
             .and_then(|n| n.to_str())
             .unwrap_or("video")
             .to_string()
-            + "_clip.mp4";
+            + if export_as_gif { "_clip.gif" } else { "_clip.mp4" };
 
         // Prompt for save location
         let path_receiver = cx.prompt_for_new_path(directory, Some(&default_filename));
+
+        // Get subtitle settings from AppState
+        let subtitle_settings = app_state.subtitle_settings.clone();
+        let display_subtitles = app_state.display_subtitles;
+        let selected_subtitle_track = app_state.selected_subtitle_track;
 
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(output_path))) = path_receiver.await {
@@ -399,15 +413,42 @@ impl ControlsWindow {
                 // Run export on background thread
                 let input_path_clone = input_path.clone();
                 let output_path_str_clone = output_path_str.clone();
+                let subtitle_settings_clone = subtitle_settings.clone();
+
                 let export_result = cx
                     .background_executor()
                     .spawn(async move {
-                        crate::ffmpeg_export::export_clip(
-                            &input_path_clone,
-                            &output_path_str_clone,
-                            clip_start,
-                            clip_end,
-                        )
+                        if export_as_gif {
+                            // Export as GIF with subtitle settings
+                            crate::ffmpeg_export::export_gif(
+                                &input_path_clone,
+                                &output_path_str_clone,
+                                clip_start,
+                                clip_end,
+                                if display_subtitles {
+                                    Some(&subtitle_settings_clone)
+                                } else {
+                                    None
+                                },
+                                display_subtitles,
+                                selected_subtitle_track,
+                            )
+                        } else {
+                            // Export as video (MP4)
+                            crate::ffmpeg_export::export_clip(
+                                &input_path_clone,
+                                &output_path_str_clone,
+                                clip_start,
+                                clip_end,
+                                if display_subtitles {
+                                    Some(&subtitle_settings_clone)
+                                } else {
+                                    None
+                                },
+                                display_subtitles,
+                                selected_subtitle_track,
+                            )
+                        }
                     })
                     .await;
 
@@ -709,6 +750,82 @@ impl Render for ControlsWindow {
                                             .flex()
                                             .flex_col()
                                             .gap_1()
+                                            // GIF export checkbox - small and above duration label
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .size(px(12.0))
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .bg(
+                                                                if self
+                                                                    .export_as_gif_checkbox
+                                                                    .read(cx)
+                                                                    .is_checked()
+                                                                {
+                                                                    rgb(0x4caf50)
+                                                                } else {
+                                                                    rgb(0x2d2d2d)
+                                                                },
+                                                            )
+                                                            .border_1()
+                                                            .border_color(rgb(0x444444))
+                                                            .rounded(px(2.))
+                                                            .cursor_pointer()
+                                                            .hover(|style| {
+                                                                style.bg(
+                                                                    if self
+                                                                        .export_as_gif_checkbox
+                                                                        .read(cx)
+                                                                        .is_checked()
+                                                                    {
+                                                                        rgb(0x66bb6a)
+                                                                    } else {
+                                                                        rgb(0x353535)
+                                                                    },
+                                                                )
+                                                            })
+                                                            .on_mouse_down(
+                                                                MouseButton::Left,
+                                                                window.listener_for(
+                                                                    &self.export_as_gif_checkbox,
+                                                                    |state, _, _, cx| {
+                                                                        let new_value =
+                                                                            !state.is_checked();
+                                                                        state.set_checked(
+                                                                            new_value, cx,
+                                                                        );
+                                                                    },
+                                                                ),
+                                                            )
+                                                            .when(
+                                                                self.export_as_gif_checkbox
+                                                                    .read(cx)
+                                                                    .is_checked(),
+                                                                |el| {
+                                                                    el.child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .text_color(rgb(
+                                                                                0xffffff,
+                                                                            ))
+                                                                            .child("✓"),
+                                                                    )
+                                                                },
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(rgb(0xcccccc))
+                                                            .child("GIF"),
+                                                    ),
+                                            )
                                             .child(
                                                 div()
                                                     .text_xs()
