@@ -46,6 +46,37 @@ fn get_video_fps(input_path: &str) -> Result<f32, String> {
     fps_str.parse::<f32>().or(Ok(30.0))
 }
 
+/// Get video resolution (width, height) using ffprobe
+pub fn get_video_resolution(input_path: &str) -> Result<(u32, u32), String> {
+    let output = Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("v:0")
+        .arg("-show_entries")
+        .arg("stream=width,height")
+        .arg("-of")
+        .arg("csv=p=0")
+        .arg(input_path)
+        .output()
+        .map_err(|e| format!("Failed to execute ffprobe: {}", e))?;
+
+    if !output.status.success() {
+        return Ok((1920, 1080)); // Default to 1080p if detection fails
+    }
+
+    let resolution_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Parse "width,height" format
+    if let Some((width_str, height_str)) = resolution_str.split_once(',') {
+        let width: u32 = width_str.parse().expect("Failed to parse width");
+        let height: u32 = height_str.parse().expect("Failed to parse height");
+        return Ok((width, height));
+    }
+
+    Ok((1920, 1080))
+}
+
 /// Check if file needs advanced audio re-encoding based on channel layout
 fn check_if_advanced_audio_reencoding_needed(input_path: &str) -> Result<Option<String>, String> {
     let output = Command::new("ffprobe")
@@ -160,6 +191,7 @@ fn get_audio_codec_args(input_path: &str) -> Result<Vec<String>, String> {
 /// * `subtitle_settings` - Optional subtitle settings (font, size, bold, italic, color)
 /// * `display_subtitles` - Whether to include burned-in subtitles in the output
 /// * `subtitle_track` - Optional subtitle track index to burn in
+/// * `source_video_width` - Width of the video as displayed in the player (for subtitle scaling)
 ///
 /// # Returns
 /// * `Ok(())` on success
@@ -172,6 +204,7 @@ pub fn export_clip(
     subtitle_settings: Option<&crate::SubtitleSettings>,
     display_subtitles: bool,
     subtitle_track: Option<usize>,
+    source_video_width: u32,
 ) -> Result<(), String> {
     // Calculate duration
     let duration = end_secs - start_secs;
@@ -190,11 +223,25 @@ pub fn export_clip(
     // Check if input is a .ts file for special handling
     let is_ts_file = input_path.ends_with(".ts");
 
+    // Get the output video resolution (which is the same as source for video exports)
+    let (output_video_width, _output_video_height) = get_video_resolution(input_path)?;
+
     // Build subtitle filter if needed
     let subtitle_filter = if display_subtitles && subtitle_track.is_some() {
         if let Some(settings) = subtitle_settings {
             // Subtract 1 because FFmpeg's si parameter is 0-based, but our track indices are 1-based
             let track_idx = subtitle_track.unwrap().saturating_sub(1);
+
+            // Scale font size proportionally to output resolution vs source resolution
+            // The subtitle_settings.font_size is calibrated for the player display at source_video_width
+            // We need to scale it down/up based on the output resolution
+            let scale_factor = output_video_width as f64 / source_video_width as f64;
+            let scaled_font_size = (settings.font_size * scale_factor) as i32;
+
+            println!(
+                "[export_clip] Subtitle font scaling: source_width={}, output_width={}, scale_factor={:.3}, original_size={:.1}, scaled_size={}",
+                source_video_width, output_video_width, scale_factor, settings.font_size, scaled_font_size
+            );
 
             // Convert hex color to FFmpeg format (remove # and convert to BGR format for ASS)
             let color = settings.color.trim_start_matches('#');
@@ -221,7 +268,7 @@ pub fn export_clip(
                 escaped_path,
                 track_idx,
                 settings.font_family,
-                settings.font_size as i32,
+                scaled_font_size,
                 if settings.bold { -1 } else { 0 },
                 if settings.italic { -1 } else { 0 },
                 bgr_color
@@ -359,6 +406,7 @@ pub fn export_clip(
 /// * `subtitle_settings` - Optional subtitle settings (font, size, bold, italic, color)
 /// * `display_subtitles` - Whether to include subtitles in the GIF
 /// * `subtitle_track` - Optional subtitle track index to burn in
+/// * `source_video_width` - Width of the video as displayed in the player (for subtitle scaling)
 ///
 /// # Returns
 /// * `Ok(())` on success
@@ -371,6 +419,7 @@ pub fn export_gif(
     subtitle_settings: Option<&crate::SubtitleSettings>,
     display_subtitles: bool,
     subtitle_track: Option<usize>,
+    source_video_width: u32,
 ) -> Result<(), String> {
     // Calculate duration
     let duration = end_secs - start_secs;
@@ -383,11 +432,25 @@ pub fn export_gif(
     // Key order from atci clipper: fps=10,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse
     let mut filter_parts = Vec::new();
 
+    // GIF output width is 480px (hardcoded in the export)
+    let gif_output_width = 480u32;
+
     // Add subtitle filter if requested and settings provided
     if display_subtitles && subtitle_track.is_some() {
         if let Some(settings) = subtitle_settings {
             // Subtract 1 because FFmpeg's si parameter is 0-based, but our track indices are 1-based
             let track_idx = subtitle_track.unwrap().saturating_sub(1);
+
+            // Scale font size proportionally to output resolution vs source resolution
+            // The subtitle_settings.font_size is calibrated for the player display at source_video_width
+            // We need to scale it down for the 480px GIF output
+            let scale_factor = gif_output_width as f64 / source_video_width as f64;
+            let scaled_font_size = (settings.font_size * scale_factor) as i32;
+
+            println!(
+                "[export_gif] Subtitle font scaling: source_width={}, gif_output_width={}, scale_factor={:.3}, original_size={:.1}, scaled_size={}",
+                source_video_width, gif_output_width, scale_factor, settings.font_size, scaled_font_size
+            );
 
             // Convert hex color to FFmpeg format (remove # and convert to BGR format for ASS)
             let color = settings.color.trim_start_matches('#');
@@ -416,7 +479,7 @@ pub fn export_gif(
                 escaped_path,
                 track_idx,
                 settings.font_family,
-                settings.font_size as i32,
+                scaled_font_size,
                 if settings.bold { -1 } else { 0 },
                 if settings.italic { -1 } else { 0 },
                 bgr_color

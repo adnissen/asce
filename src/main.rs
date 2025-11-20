@@ -202,6 +202,7 @@ pub struct AppState {
     pub selected_subtitle_track: Option<usize>, // Currently selected subtitle track index
     pub display_subtitles: bool,
     pub subtitle_settings: SubtitleSettings,
+    pub source_video_width: u32, // Horizontal resolution of the source video for subtitle scaling
 }
 
 impl AppState {
@@ -216,6 +217,7 @@ impl AppState {
             selected_subtitle_track: Some(0), // No track selected initially
             display_subtitles: false,
             subtitle_settings: SubtitleSettings::default(),
+            source_video_width: 1920, // Default to 1920 (will be updated when video loads)
         }
     }
 
@@ -321,10 +323,15 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
 
     println!("Unified window created");
 
-    // Update AppState with new window and file path
+    // Get video resolution before updating AppState
+    let (video_width, _video_height) = crate::ffmpeg_export::get_video_resolution(&path_string)
+        .unwrap_or((1920, 1080));
+
+    // Update AppState with new window, file path, and source video resolution
     cx.update_global::<AppState, _>(|state, _| {
         state.unified_window = Some(unified_window.into());
         state.file_path = Some(path_string.clone());
+        state.source_video_width = video_width;
     });
 
     // Extract and set the display handle for the video window

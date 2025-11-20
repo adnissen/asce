@@ -398,6 +398,7 @@ impl ControlsWindow {
         let subtitle_settings = app_state.subtitle_settings.clone();
         let display_subtitles = app_state.display_subtitles;
         let selected_subtitle_track = app_state.selected_subtitle_track;
+        let source_video_width = app_state.source_video_width;
 
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(output_path))) = path_receiver.await {
@@ -432,6 +433,7 @@ impl ControlsWindow {
                                 },
                                 display_subtitles,
                                 selected_subtitle_track,
+                                source_video_width,
                             )
                         } else {
                             // Export as video (MP4)
@@ -447,6 +449,7 @@ impl ControlsWindow {
                                 },
                                 display_subtitles,
                                 selected_subtitle_track,
+                                source_video_width,
                             )
                         }
                     })
