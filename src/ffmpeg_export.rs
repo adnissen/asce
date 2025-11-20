@@ -193,7 +193,8 @@ pub fn export_clip(
     // Build subtitle filter if needed
     let subtitle_filter = if display_subtitles && subtitle_track.is_some() {
         if let Some(settings) = subtitle_settings {
-            let track_idx = subtitle_track.unwrap();
+            // Subtract 1 because FFmpeg's si parameter is 0-based, but our track indices are 1-based
+            let track_idx = subtitle_track.unwrap().saturating_sub(1);
 
             // Convert hex color to FFmpeg format (remove # and convert to BGR format for ASS)
             let color = settings.color.trim_start_matches('#');
@@ -204,9 +205,20 @@ pub fn export_clip(
                 color.to_string()
             };
 
+            // Escape the input path for FFmpeg filter
+            // Need to escape: \ ' : [ ] , ;
+            let escaped_path = input_path
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace(":", "\\:")
+                .replace("[", "\\[")
+                .replace("]", "\\]")
+                .replace(",", "\\,")
+                .replace(";", "\\;");
+
             Some(format!(
-                "subtitles={}:si={}:force_style='FontName={},FontSize={},Bold={},Italic={},PrimaryColour=&H{}'",
-                input_path,
+                "subtitles={}:si={}:force_style=FontName={}\\,FontSize={}\\,Bold={}\\,Italic={}\\,PrimaryColour=&H{}",
+                escaped_path,
                 track_idx,
                 settings.font_family,
                 settings.font_size as i32,
@@ -227,14 +239,25 @@ pub fn export_clip(
 
     cmd.arg("-ss").arg(&start_time).arg("-i").arg(input_path);
 
+    // When using subtitles, we need to use copyts and -to instead of -t
+    let has_subtitles = subtitle_filter.is_some();
+
+    if has_subtitles {
+        cmd.arg("-copyts");
+    }
+
     if is_ts_file {
         // For TS files: use vsync cfr
-        cmd.arg("-t").arg(&duration_time);
+        if has_subtitles {
+            // Use -to with absolute endpoint when subtitles are enabled
+            cmd.arg("-to").arg(format!("{}", end_secs));
+        } else {
+            cmd.arg("-t").arg(&duration_time);
+        }
 
         // Add subtitle filter if present, otherwise just format
         if let Some(ref sub_filter) = subtitle_filter {
-            cmd.arg("-vf")
-                .arg(format!("{},format=yuv420p", sub_filter));
+            cmd.arg("-vf").arg(format!("{},format=yuv420p", sub_filter));
         } else {
             cmd.arg("-vf").arg("format=yuv420p");
         }
@@ -250,13 +273,22 @@ pub fn export_clip(
             .arg("-vsync")
             .arg("cfr");
     } else {
-        // For non-TS files: use double seek and frame count
-        cmd.arg("-ss")
-            .arg("00:00:00.001")
-            .arg("-t")
-            .arg(&duration_time)
-            .arg("-frames:v")
-            .arg(frame_count.to_string());
+        // For non-TS files: use double seek and frame count (when no subtitles)
+        // or use -to (when subtitles are enabled)
+        if has_subtitles {
+            // Use -to with absolute endpoint when subtitles are enabled
+            cmd.arg("-to")
+                .arg(format!("{}", end_secs))
+                .arg("-frames:v")
+                .arg(frame_count.to_string());
+        } else {
+            cmd.arg("-ss")
+                .arg("00:00:00.001")
+                .arg("-t")
+                .arg(&duration_time)
+                .arg("-frames:v")
+                .arg(frame_count.to_string());
+        }
 
         // Add subtitle filter if present
         if let Some(ref sub_filter) = subtitle_filter {
@@ -284,13 +316,20 @@ pub fn export_clip(
         .arg("-preset")
         .arg("ultrafast")
         .arg("-movflags")
-        .arg("faststart+frag_keyframe+empty_moov")
-        .arg("-avoid_negative_ts")
-        .arg("make_zero")
-        .arg("-y")
+        .arg("faststart+frag_keyframe+empty_moov");
+
+    // Don't use avoid_negative_ts when subtitles are enabled
+    if !has_subtitles {
+        cmd.arg("-avoid_negative_ts").arg("make_zero");
+    }
+
+    cmd.arg("-y")
         .arg("-map_chapters")
         .arg("-1")
         .arg(output_path);
+
+    // Debug: print the command
+    eprintln!("FFmpeg video export command: {:?}", cmd);
 
     let output = cmd
         .output()
@@ -347,7 +386,8 @@ pub fn export_gif(
     // Add subtitle filter if requested and settings provided
     if display_subtitles && subtitle_track.is_some() {
         if let Some(settings) = subtitle_settings {
-            let track_idx = subtitle_track.unwrap();
+            // Subtract 1 because FFmpeg's si parameter is 0-based, but our track indices are 1-based
+            let track_idx = subtitle_track.unwrap().saturating_sub(1);
 
             // Convert hex color to FFmpeg format (remove # and convert to BGR format for ASS)
             let color = settings.color.trim_start_matches('#');
@@ -360,9 +400,20 @@ pub fn export_gif(
 
             // Build force_style string for subtitle styling
             // Note: FFmpeg subtitles filter uses ASS/SSA style format
+            // Escape the input path for FFmpeg filter
+            // Need to escape: \ ' : [ ] , ;
+            let escaped_path = input_path
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace(":", "\\:")
+                .replace("[", "\\[")
+                .replace("]", "\\]")
+                .replace(",", "\\,")
+                .replace(";", "\\;");
+
             filter_parts.push(format!(
-                "subtitles={}:si={}:force_style='FontName={},FontSize={},Bold={},Italic={},PrimaryColour=&H{}'",
-                input_path,
+                "subtitles={}:si={}:force_style=FontName={}\\,FontSize={}\\,Bold={}\\,Italic={}\\,PrimaryColour=&H{}",
+                escaped_path,
                 track_idx,
                 settings.font_family,
                 settings.font_size as i32,
@@ -386,6 +437,7 @@ pub fn export_gif(
 
     // Build ffmpeg command with correct argument order from atci clipper:
     // -ss {start} -t {duration} -i {input} -vf {filter} -loop 0 -y {output}
+    // Note: Unlike video exports, GIFs don't need -to for subtitles
     let mut cmd = Command::new("ffmpeg");
 
     cmd.arg("-ss")
@@ -394,12 +446,18 @@ pub fn export_gif(
         .arg(&duration_time)
         .arg("-i")
         .arg(input_path)
-        .arg("-vf")
+        .arg("-copyts");
+
+    cmd.arg("-vf")
         .arg(&vf_filter)
         .arg("-loop")
         .arg("0") // Infinite loop
         .arg("-y") // Overwrite output file
         .arg(output_path);
+
+    // Debug: print the command and filter
+    eprintln!("FFmpeg GIF export command: {:?}", cmd);
+    eprintln!("GIF filter chain: {}", vf_filter);
 
     let output = cmd
         .output()

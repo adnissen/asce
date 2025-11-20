@@ -41,6 +41,11 @@ impl CustomTitlebar {
             }
         }
     }
+
+    #[cfg(not(target_os = "windows"))]
+    fn start_window_drag(_window: &mut gpui::Window) {
+        // No-op on non-Windows platforms
+    }
 }
 
 impl Render for CustomTitlebar {
