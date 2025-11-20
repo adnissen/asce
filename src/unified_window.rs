@@ -2,12 +2,19 @@ use gpui::{
     canvas, div, prelude::*, px, rgb, Bounds, Context, Corners, Entity, IntoElement, Render,
     RenderImage, Size, Window,
 };
+use serde::Deserialize;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::controls_window::ControlsWindow;
 use crate::custom_titlebar::CustomTitlebar;
 use crate::platform;
 use crate::subtitle_window::SubtitleWindow;
+
+#[derive(Deserialize)]
+struct TriangleFrames {
+    frames: Vec<String>,
+}
 
 /// Unified window that contains video player area, controls, and subtitle window
 /// The video area will have a child window/view created for mpv rendering
@@ -19,6 +26,8 @@ pub struct UnifiedWindow {
     video_area_size: Size<gpui::Pixels>,
     last_bounds: Option<Bounds<gpui::Pixels>>,
     last_video_render_image: Arc<Mutex<Option<Arc<RenderImage>>>>,
+    animation_start_time: Instant,
+    triangle_frames: Vec<String>,
 }
 
 impl UnifiedWindow {
@@ -41,19 +50,8 @@ impl UnifiedWindow {
         let controls = cx.new(|cx| ControlsWindow::new(cx));
         let subtitles = cx.new(|cx| SubtitleWindow::new(cx));
 
-        // TODO: Set up continuous refresh for video playback (~60fps)
-        // Currently commented out due to type inference issues with cx
-        // We'll need to trigger redraws when MPV renders new frames
-        // let _refresh_task = cx.spawn(|this, mut cx| async move {
-        //     loop {
-        //         cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
-        //         let _ = cx.update(|cx| {
-        //             let _ = this.update(cx, |_, cx| {
-        //                 cx.notify();
-        //             });
-        //         });
-        //     }
-        // });
+        // Load triangle frames from JSON file
+        let triangle_frames = Self::load_triangle_frames();
 
         Self {
             titlebar,
@@ -65,7 +63,75 @@ impl UnifiedWindow {
             },
             last_bounds: None,
             last_video_render_image: Arc::new(Mutex::new(None)),
+            animation_start_time: Instant::now(),
+            triangle_frames,
         }
+    }
+
+    /// Load triangle frames from JSON file
+    fn load_triangle_frames() -> Vec<String> {
+        let json_path = "assets/triangle_frames.json";
+
+        match std::fs::read_to_string(json_path) {
+            Ok(contents) => match serde_json::from_str::<TriangleFrames>(&contents) {
+                Ok(data) => data.frames,
+                Err(e) => {
+                    eprintln!("Failed to parse triangle frames JSON: {}", e);
+                    Self::default_triangle_frames()
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to read triangle frames file: {}", e);
+                Self::default_triangle_frames()
+            }
+        }
+    }
+
+    /// Fallback to default triangle frames if JSON loading fails
+    fn default_triangle_frames() -> Vec<String> {
+        vec![
+            "       /\\       \n      /  \\      \n     /    \\     \n    /      \\    \n   /        \\   \n  /          \\  \n /            \\ \n/______________\\".to_string(),
+        ]
+    }
+
+    /// Generate a rotating ASCII triangle
+    fn generate_rotating_triangle(&self) -> String {
+        if self.triangle_frames.is_empty() {
+            return String::new();
+        }
+
+        let elapsed = self.animation_start_time.elapsed().as_secs_f32();
+
+        // Rotate through frames based on the number of frames loaded
+        let frame_count = self.triangle_frames.len();
+        let frame = (elapsed * 2.0) as usize % frame_count;
+
+        self.triangle_frames[frame].clone()
+    }
+
+    /// Get a color that slowly changes over time
+    fn get_animated_color(&self) -> gpui::Rgba {
+        let elapsed = self.animation_start_time.elapsed().as_secs_f32();
+
+        // Cycle through colors over 10 seconds
+        let hue = (elapsed * 36.0) % 360.0;
+
+        // Convert HSV to RGB (simple conversion)
+        let h = hue / 60.0;
+        let i = h.floor();
+        let f = h - i;
+        let q = 1.0 - f;
+
+        let (r, g, b) = match i as i32 % 6 {
+            0 => (1.0, f, 0.0),
+            1 => (q, 1.0, 0.0),
+            2 => (0.0, 1.0, f),
+            3 => (0.0, q, 1.0),
+            4 => (f, 0.0, 1.0),
+            _ => (1.0, 0.0, q),
+        };
+
+        gpui::Rgba { r, g, b, a: 1.0 }
     }
 
     /// Get the current video area size for positioning the child video surface
@@ -107,6 +173,18 @@ impl UnifiedWindow {
 
 impl Render for UnifiedWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Check if a video is loaded
+        let app_state = cx.global::<crate::AppState>();
+        let has_video_loaded = app_state.has_video_loaded;
+
+        // Request continuous animation when no video is loaded
+        if !has_video_loaded {
+            cx.on_next_frame(window, |this, _window, cx| {
+                // Request another frame for continuous portal animation
+                cx.notify();
+            });
+        }
+
         // Get the window bounds to calculate proportions
         let window_bounds = window.bounds();
         let total_width = window_bounds.size.width;
@@ -188,85 +266,101 @@ impl Render for UnifiedWindow {
                     .flex_row()
                     .w(total_width)
                     .h(video_section_height)
-                    // Video area - canvas for GPUI rendering
+                    // Video area - either show portal or video canvas
                     .child(
                         div()
                             .id("video-area")
                             .w(video_width)
                             .h(video_section_height)
                             .bg(rgb(0x000000))
-                            .child({
-                                // Clone the Arc<Mutex<>> to share with paint closure
+                            .when(!has_video_loaded, |el| {
+                                // Show rotating triangle when no video is loaded
+                                let triangle = self.generate_rotating_triangle();
+                                let color = self.get_animated_color();
+
+                                el.flex().items_center().justify_center().child(
+                                    div()
+                                        .text_color(color)
+                                        .font_family("courier")
+                                        .text_size(px(24.0))
+                                        .line_height(px(20.0))
+                                        .child(triangle),
+                                )
+                            })
+                            .when(has_video_loaded, |el| {
+                                // Show video canvas when video is loaded
                                 let last_image = self.last_video_render_image.clone();
 
-                                canvas(
-                                    move |_bounds, _window, cx| {
-                                        // Get frame buffer from video player (prepaint phase)
-                                        let app_state = cx.global::<crate::AppState>();
-                                        let video_player = app_state.video_player.clone();
+                                el.child(
+                                    canvas(
+                                        move |_bounds, _window, cx| {
+                                            // Get frame buffer from video player (prepaint phase)
+                                            let app_state = cx.global::<crate::AppState>();
+                                            let video_player = app_state.video_player.clone();
 
-                                        // Prepare frame data
-                                        if let Ok(player) = video_player.lock() {
-                                            // Get Arc<Vec<u8>> - cheap Arc clone, no Vec clone!
-                                            let frame_buffer_arc = player.get_frame_buffer();
-                                            let (width, height) = player.get_video_dimensions();
+                                            // Prepare frame data
+                                            if let Ok(player) = video_player.lock() {
+                                                // Get Arc<Vec<u8>> - cheap Arc clone, no Vec clone!
+                                                let frame_buffer_arc = player.get_frame_buffer();
+                                                let (width, height) = player.get_video_dimensions();
 
-                                            // Release the player lock
-                                            drop(player);
+                                                // Release the player lock
+                                                drop(player);
 
-                                            // Use Arc::try_unwrap or clone the data for RgbaImage
-                                            // RgbaImage::from_raw takes ownership of Vec, so we need to extract it
-                                            let buffer = Arc::try_unwrap(frame_buffer_arc)
-                                                .unwrap_or_else(|arc| (*arc).clone());
+                                                // Use Arc::try_unwrap or clone the data for RgbaImage
+                                                // RgbaImage::from_raw takes ownership of Vec, so we need to extract it
+                                                let buffer = Arc::try_unwrap(frame_buffer_arc)
+                                                    .unwrap_or_else(|arc| (*arc).clone());
 
-                                            // Buffer is in BGRA format from OpenGL ReadPixels
-                                            // No channel swap needed - pass directly to RgbaImage
+                                                // Buffer is in BGRA format from OpenGL ReadPixels
+                                                // No channel swap needed - pass directly to RgbaImage
 
-                                            // Create image::Frame from buffer
-                                            use image::{Delay, Frame, RgbaImage};
+                                                // Create image::Frame from buffer
+                                                use image::{Delay, Frame, RgbaImage};
 
-                                            if let Some(rgba_image) =
-                                                RgbaImage::from_raw(width, height, buffer)
-                                            {
-                                                let frame = Frame::from_parts(
-                                                    rgba_image.into(),
-                                                    0,
-                                                    0,
-                                                    Delay::from_numer_denom_ms(0, 1),
-                                                );
-                                                return Some(smallvec::smallvec![frame]);
-                                            }
-                                        }
-                                        None
-                                    },
-                                    move |bounds, frame_data, window, _cx| {
-                                        // Paint the frame (paint phase)
-                                        if let Some(frames) = frame_data {
-                                            let new_image = Arc::new(RenderImage::new(frames));
-
-                                            // Drop the previous frame from sprite atlas before painting new one
-                                            if let Ok(mut last) = last_image.lock() {
-                                                if let Some(old_image) = last.take() {
-                                                    let _ = window.drop_image(old_image);
+                                                if let Some(rgba_image) =
+                                                    RgbaImage::from_raw(width, height, buffer)
+                                                {
+                                                    let frame = Frame::from_parts(
+                                                        rgba_image.into(),
+                                                        0,
+                                                        0,
+                                                        Delay::from_numer_denom_ms(0, 1),
+                                                    );
+                                                    return Some(smallvec::smallvec![frame]);
                                                 }
-
-                                                // Paint the new frame
-                                                let _ = window.paint_image(
-                                                    bounds,
-                                                    Corners::default(),
-                                                    new_image.clone(),
-                                                    0,     // frame_index
-                                                    false, // grayscale
-                                                );
-
-                                                // Store the new image for next frame
-                                                *last = Some(new_image);
                                             }
-                                        }
-                                    },
+                                            None
+                                        },
+                                        move |bounds, frame_data, window, _cx| {
+                                            // Paint the frame (paint phase)
+                                            if let Some(frames) = frame_data {
+                                                let new_image = Arc::new(RenderImage::new(frames));
+
+                                                // Drop the previous frame from sprite atlas before painting new one
+                                                if let Ok(mut last) = last_image.lock() {
+                                                    if let Some(old_image) = last.take() {
+                                                        let _ = window.drop_image(old_image);
+                                                    }
+
+                                                    // Paint the new frame
+                                                    let _ = window.paint_image(
+                                                        bounds,
+                                                        Corners::default(),
+                                                        new_image.clone(),
+                                                        0,     // frame_index
+                                                        false, // grayscale
+                                                    );
+
+                                                    // Store the new image for next frame
+                                                    *last = Some(new_image);
+                                                }
+                                            }
+                                        },
+                                    )
+                                    .w_full()
+                                    .h_full(),
                                 )
-                                .w_full()
-                                .h_full()
                             }),
                     )
                     // Subtitle window area

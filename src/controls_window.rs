@@ -478,9 +478,15 @@ impl ControlsWindow {
 
 impl Render for ControlsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        cx.on_next_frame(window, |t, _window, cx| {
-            // Update from video player and request next frame
-            t.update_position_from_player(cx);
+        // Check if a video is loaded
+        let app_state = cx.global::<AppState>();
+        let has_video_loaded = app_state.has_video_loaded;
+
+        // Only update position if video is loaded
+        if has_video_loaded {
+            cx.on_next_frame(window, |t, _window, cx| {
+                // Update from video player and request next frame
+                t.update_position_from_player(cx);
 
             // Check if we need to pause during clip playback
             if t.is_playing_clip {
@@ -518,20 +524,21 @@ impl Render for ControlsWindow {
                 }
             }
 
-            // Rate limit renders to 30 FPS (33.33ms per frame)
-            const FRAME_DURATION_MS: u128 = 33; // 1000ms / 30fps ≈ 33.33ms
-            let now = Instant::now();
-            let elapsed = now.duration_since(t.last_render_time).as_millis();
+                // Rate limit renders to 30 FPS (33.33ms per frame)
+                const FRAME_DURATION_MS: u128 = 33; // 1000ms / 30fps ≈ 33.33ms
+                let now = Instant::now();
+                let elapsed = now.duration_since(t.last_render_time).as_millis();
 
-            if elapsed >= FRAME_DURATION_MS {
-                t.last_render_time = now;
-                // Request another render on next frame to create continuous updates
-                cx.notify();
-            }
-        });
+                if elapsed >= FRAME_DURATION_MS {
+                    t.last_render_time = now;
+                    // Request another render on next frame to create continuous updates
+                    cx.notify();
+                }
+            });
+        }
 
-        // Update slider state to match current video position and duration
-        if self.duration > 0.0 {
+        // Update slider state to match current video position and duration (only if video loaded)
+        if has_video_loaded && self.duration > 0.0 {
             // Update max if duration is known
             let current_max = self.slider_state.read(cx).get_max();
             if (current_max - self.duration).abs() > 0.1 {

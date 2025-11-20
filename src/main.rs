@@ -109,13 +109,19 @@ fn main() {
                 std::process::exit(1);
             }
         } else {
-            // No video path provided, create the initial window with "Open File" button
-            let initial_window_options = WindowOptions {
+            // No video path provided, create the unified window with disabled controls and ASCII portal
+            let total_width = 1260.0;
+            let total_height = 720.0;
+
+            let unified_window_options = WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
                     None,
-                    gpui::size(px(300.0), px(200.0)),
+                    gpui::size(px(total_width), px(total_height)),
                     cx,
                 ))),
+                window_background: gpui::WindowBackgroundAppearance::Opaque,
+                focus: true,
+                is_movable: true,
                 titlebar: Some(gpui::TitlebarOptions {
                     title: Some("asve".into()),
                     appears_transparent: true,
@@ -126,17 +132,17 @@ fn main() {
             };
 
             let window = cx
-                .open_window(initial_window_options, |_window, cx| {
-                    cx.new(|cx| InitialWindow::new(cx))
+                .open_window(unified_window_options, |_window, cx| {
+                    cx.new(|cx| UnifiedWindow::new(cx))
                 })
                 .unwrap();
 
-            // Store the initial window handle
+            // Store the unified window handle
             cx.update_global::<AppState, _>(|state, _| {
-                state.initial_window = Some(window.into());
+                state.unified_window = Some(window.into());
             });
 
-            println!("Initial window created");
+            println!("Unified window created (no video loaded)");
         }
     });
 }
@@ -203,6 +209,7 @@ pub struct AppState {
     pub display_subtitles: bool,
     pub subtitle_settings: SubtitleSettings,
     pub source_video_width: u32, // Horizontal resolution of the source video for subtitle scaling
+    pub has_video_loaded: bool, // Whether a video has been loaded
 }
 
 impl AppState {
@@ -218,6 +225,7 @@ impl AppState {
             display_subtitles: false,
             subtitle_settings: SubtitleSettings::default(),
             source_video_width: 1920, // Default to 1920 (will be updated when video loads)
+            has_video_loaded: false,  // No video loaded initially
         }
     }
 
@@ -329,6 +337,7 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
         state.video_nsview = None;
         state.file_path = Some(path_string.clone());
         state.source_video_width = video_width;
+        state.has_video_loaded = true; // Mark that a video has been loaded
     });
 
     // Extract and set the display handle for the video window
