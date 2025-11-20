@@ -2,8 +2,9 @@
 //!
 //! A simple checkbox component for toggling boolean values.
 
+use crate::theme::{CheckboxSize, OneDarkTheme};
 use gpui::{
-    div, prelude::*, px, rgb, App, Context, Empty, Entity, EventEmitter, IntoElement, MouseButton,
+    div, prelude::*, px, App, Context, Empty, Entity, EventEmitter, IntoElement, MouseButton,
     MouseDownEvent, Render, RenderOnce, StyleRefinement, Styled, Window,
 };
 
@@ -99,25 +100,21 @@ impl RenderOnce for Checkbox {
                 // Checkbox box
                 div()
                     .id("checkbox-box")
-                    .size(px(18.0))
+                    .size(px(CheckboxSize::CONTAINER))
                     .flex()
                     .items_center()
                     .justify_center()
                     .bg(if is_checked {
-                        rgb(0x4caf50)
+                        OneDarkTheme::element_background()
                     } else {
-                        rgb(0x2d2d2d)
+                        OneDarkTheme::border_transparent()
                     })
                     .border_1()
-                    .border_color(rgb(0x444444))
-                    .rounded(px(3.))
+                    .border_color(OneDarkTheme::border())
+                    .rounded(px(CheckboxSize::BORDER_RADIUS))
                     .cursor_pointer()
                     .hover(|style| {
-                        style.bg(if is_checked {
-                            rgb(0x66bb6a)
-                        } else {
-                            rgb(0x353535)
-                        })
+                        style.border_color(OneDarkTheme::border_variant())
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -126,11 +123,21 @@ impl RenderOnce for Checkbox {
                         }),
                     )
                     .when(is_checked, |el| {
-                        el.child(div().text_sm().text_color(rgb(0xffffff)).child("✓"))
+                        el.child(
+                            div()
+                                .text_sm()
+                                .text_color(OneDarkTheme::text())
+                                .child("✓"),
+                        )
                     }),
             )
             .when_some(self.label, |el, label| {
-                el.child(div().text_sm().text_color(rgb(0xcccccc)).child(label))
+                el.child(
+                    div()
+                        .text_sm()
+                        .text_color(OneDarkTheme::text())
+                        .child(label),
+                )
             })
     }
 }

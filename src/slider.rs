@@ -1,11 +1,12 @@
 //! Slider component adapted from gpui-component
 
+use crate::theme::OneDarkTheme;
 use std::ops::Range;
 
 use gpui::{
-    canvas, div, prelude::*, px, rgb, Along, App, Axis, Bounds, Context, DragMoveEvent, Empty,
-    Entity, EntityId, EventEmitter, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    Pixels, Point, Render, RenderOnce, StyleRefinement, Styled, Window,
+    canvas, div, prelude::*, px, Along, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity,
+    EntityId, EventEmitter, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
+    Point, Render, RenderOnce, StyleRefinement, Styled, Window,
 };
 
 #[derive(Clone)]
@@ -268,8 +269,8 @@ impl RenderOnce for Slider {
         let bar_size = state.bounds.size.along(axis);
         let bar_end = state.percentage.end * bar_size;
 
-        let bar_color = rgb(0x4caf50);
-        let thumb_color = rgb(0xffffff);
+        let bar_color = OneDarkTheme::info();
+        let thumb_color = OneDarkTheme::text();
 
         div()
             .id(("slider", self.state.entity_id()))
@@ -323,7 +324,7 @@ impl RenderOnce for Slider {
                             .relative()
                             .w_full()
                             .h(px(6.0))
-                            .bg(rgb(0x2d2d2d))
+                            .bg(OneDarkTheme::element_background())
                             .rounded_full()
                             .child(
                                 div()
@@ -349,7 +350,7 @@ impl RenderOnce for Slider {
                                     .shadow_md()
                                     .size_4()
                                     .p(px(1.))
-                                    .bg(rgb(0x555555))
+                                    .bg(OneDarkTheme::border())
                                     .child(
                                         div()
                                             .flex_shrink_0()

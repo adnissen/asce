@@ -1,5 +1,6 @@
+use crate::theme::OneDarkTheme;
 use gpui::{
-    actions, div, prelude::*, rgb, App, Bounds, Context, CursorStyle, Element, ElementId,
+    actions, div, prelude::*, App, Bounds, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId,
     LayoutId, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window,
 };
@@ -358,18 +359,18 @@ impl Render for TimeInput {
             .w_full()
             .px_2()
             .py_1()
-            .bg(rgb(0x2a2a2a))
+            .bg(OneDarkTheme::element_background())
             .border_1()
             .border_color(if !is_valid {
-                rgb(0xff4444) // Faint red for invalid
+                OneDarkTheme::error()
             } else if is_focused {
-                rgb(0x4caf50)
+                OneDarkTheme::border_focused()
             } else {
-                rgb(0x444444)
+                OneDarkTheme::border()
             })
             .rounded_md()
             .text_xs()
-            .text_color(rgb(0xffffff))
+            .text_color(OneDarkTheme::text())
             .cursor(CursorStyle::IBeam)
             .key_context("TimeInput")
             .track_focus(&self.focus_handle(cx))

@@ -2,8 +2,9 @@
 //!
 //! A dropdown component for selecting from a list of options.
 
+use crate::theme::OneDarkTheme;
 use gpui::{
-    div, prelude::*, px, rgb, App, Context, Empty, Entity, EventEmitter, IntoElement, MouseButton,
+    div, prelude::*, px, App, Context, Empty, Entity, EventEmitter, IntoElement, MouseButton,
     MouseDownEvent, Render, RenderOnce, StyleRefinement, Styled, Window,
 };
 
@@ -183,12 +184,12 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                     .justify_between()
                     .px_2()
                     .py_1()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(OneDarkTheme::element_background())
                     .border_1()
-                    .border_color(rgb(0x444444))
+                    .border_color(OneDarkTheme::border())
                     .rounded(px(3.))
                     .cursor_pointer()
-                    .hover(|style| style.bg(rgb(0x353535)))
+                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
                     .on_mouse_down(
                         MouseButton::Left,
                         window.listener_for(&self.state, |state, _: &MouseDownEvent, _, cx| {
@@ -198,22 +199,25 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0xffffff))
+                            .text_color(OneDarkTheme::text())
                             .child(selected_title),
                     )
                     .child(
                         // Dropdown arrow
-                        div().text_xs().text_color(rgb(0x999999)).child(if is_open {
-                            match self.direction {
-                                DropdownDirection::Down => "▲",
-                                DropdownDirection::Up => "▼",
-                            }
-                        } else {
-                            match self.direction {
-                                DropdownDirection::Down => "▼",
-                                DropdownDirection::Up => "▲",
-                            }
-                        }),
+                        div()
+                            .text_xs()
+                            .text_color(OneDarkTheme::text_muted())
+                            .child(if is_open {
+                                match self.direction {
+                                    DropdownDirection::Down => "▲",
+                                    DropdownDirection::Up => "▼",
+                                }
+                            } else {
+                                match self.direction {
+                                    DropdownDirection::Down => "▼",
+                                    DropdownDirection::Up => "▲",
+                                }
+                            }),
                     ),
             )
             .when(is_open, |el| {
@@ -225,9 +229,9 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                     .w_full()
                     .max_h(px(300.))
                     .overflow_y_scroll()
-                    .bg(rgb(0x1a1a1a)) // Fully opaque dark background
+                    .bg(OneDarkTheme::surface_background())
                     .border_1()
-                    .border_color(rgb(0x444444))
+                    .border_color(OneDarkTheme::border())
                     .rounded(px(4.))
                     .shadow_lg()
                     .occlude();
@@ -248,9 +252,11 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                         .cursor_pointer()
                         .w_full()
                         .opacity(1.0)
-                        .bg(rgb(0x1a1a1a)) // Fully opaque background for all items
-                        .when(is_selected, |style| style.bg(rgb(0x4caf50)))
-                        .when(!is_selected, |style| style.hover(|s| s.bg(rgb(0x2d2d2d))))
+                        .bg(OneDarkTheme::surface_background())
+                        .when(is_selected, |style| style.bg(OneDarkTheme::element_selected()))
+                        .when(!is_selected, |style| {
+                            style.hover(|s| s.bg(OneDarkTheme::element_hover()))
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             window.listener_for(
@@ -263,7 +269,7 @@ impl<T: SelectItem + 'static> RenderOnce for Select<T> {
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0xffffff))
+                                .text_color(OneDarkTheme::text())
                                 .child(item.display_title()),
                         )
                 })))

@@ -1,4 +1,5 @@
-use gpui::{div, prelude::*, px, rgb, Context, Entity, IntoElement, MouseButton, Render, Window};
+use crate::theme::OneDarkTheme;
+use gpui::{div, prelude::*, px, Context, Entity, IntoElement, MouseButton, Render, Window};
 use std::time::Instant;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
@@ -563,7 +564,7 @@ impl Render for ControlsWindow {
         div()
             .flex()
             .flex_col()
-            .bg(rgb(0x1a1a1a))
+            .bg(OneDarkTheme::surface_background())
             .size_full()
             .p_4()
             .gap_3()
@@ -587,7 +588,7 @@ impl Render for ControlsWindow {
                             .justify_between()
                             .w_full()
                             .text_sm()
-                            .text_color(rgb(0xffffff))
+                            .text_color(OneDarkTheme::text())
                             .child(Self::format_time(current_time))
                             .child(Self::format_time(duration)),
                     )
@@ -627,12 +628,12 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .px_2()
                                                     .py_1()
-                                                    .bg(rgb(0x1976d2))
+                                                    .bg(OneDarkTheme::info())
                                                     .rounded_md()
                                                     .cursor_pointer()
                                                     .text_xs()
-                                                    .text_color(rgb(0xffffff))
-                                                    .hover(|style| style.bg(rgb(0x2196f3)))
+                                                    .text_color(OneDarkTheme::text())
+                                                    .hover(|style| style.bg(OneDarkTheme::info()))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
@@ -688,12 +689,12 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .px_2()
                                                     .py_1()
-                                                    .bg(rgb(0xc62828))
+                                                    .bg(OneDarkTheme::error())
                                                     .rounded_md()
                                                     .cursor_pointer()
                                                     .text_xs()
-                                                    .text_color(rgb(0xffffff))
-                                                    .hover(|style| style.bg(rgb(0xe53935)))
+                                                    .text_color(OneDarkTheme::text())
+                                                    .hover(|style| style.bg(OneDarkTheme::error()))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
@@ -778,13 +779,13 @@ impl Render for ControlsWindow {
                                                                     .read(cx)
                                                                     .is_checked()
                                                                 {
-                                                                    rgb(0x4caf50)
+                                                                    OneDarkTheme::success()
                                                                 } else {
-                                                                    rgb(0x2d2d2d)
+                                                                    OneDarkTheme::element_background()
                                                                 },
                                                             )
                                                             .border_1()
-                                                            .border_color(rgb(0x444444))
+                                                            .border_color(OneDarkTheme::border())
                                                             .rounded(px(2.))
                                                             .cursor_pointer()
                                                             .hover(|style| {
@@ -794,9 +795,8 @@ impl Render for ControlsWindow {
                                                                         .read(cx)
                                                                         .is_checked()
                                                                     {
-                                                                        rgb(0x66bb6a)
-                                                                    } else {
-                                                                        rgb(0x353535)
+                                                                        OneDarkTheme::success()                                                                    } else {
+                                                                        OneDarkTheme::element_hover()
                                                                     },
                                                                 )
                                                             })
@@ -821,9 +821,9 @@ impl Render for ControlsWindow {
                                                                     el.child(
                                                                         div()
                                                                             .text_xs()
-                                                                            .text_color(rgb(
-                                                                                0xffffff,
-                                                                            ))
+                                                                            .text_color(
+                                                                                OneDarkTheme::text(),
+                                                                            )
                                                                             .child("✓"),
                                                                     )
                                                                 },
@@ -832,7 +832,7 @@ impl Render for ControlsWindow {
                                                     .child(
                                                         div()
                                                             .text_xs()
-                                                            .text_color(rgb(0xcccccc))
+                                                            .text_color(OneDarkTheme::text_muted())
                                                             .child("GIF"),
                                                     ),
                                             )
@@ -840,9 +840,9 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .text_xs()
                                                     .text_color(if is_valid {
-                                                        rgb(0xffffff)
+                                                        OneDarkTheme::text()
                                                     } else {
-                                                        rgb(0x666666)
+                                                        OneDarkTheme::text_disabled()
                                                     })
                                                     .child(format!(
                                                         "Duration: {}",
@@ -858,15 +858,15 @@ impl Render for ControlsWindow {
                                                     .rounded_md()
                                                     .text_xs()
                                                     .when(is_valid && !self.is_exporting, |this| {
-                                                        this.bg(rgb(0xf57c00))
+                                                        this.bg(OneDarkTheme::warning())
                                                             .cursor_pointer()
-                                                            .text_color(rgb(0xffffff))
-                                                            .hover(|style| style.bg(rgb(0xfb8c00)))
+                                                            .text_color(OneDarkTheme::text())
+                                                            .hover(|style| style.bg(OneDarkTheme::warning()))
                                                     })
                                                     .when(!is_valid || self.is_exporting, |this| {
-                                                        this.bg(rgb(0x404040))
+                                                        this.bg(OneDarkTheme::element_background())
                                                             .cursor_not_allowed()
-                                                            .text_color(rgb(0x666666))
+                                                            .text_color(OneDarkTheme::text_disabled())
                                                     })
                                                     .on_mouse_down(
                                                         MouseButton::Left,
@@ -917,11 +917,11 @@ impl Render for ControlsWindow {
                                 div()
                                     .px_6()
                                     .py_3()
-                                    .bg(rgb(0x404040))
+                                    .bg(OneDarkTheme::element_background())
                                     .rounded_md()
                                     .cursor_pointer()
-                                    .text_color(rgb(0xffffff))
-                                    .hover(|style| style.bg(rgb(0x505050)))
+                                    .text_color(OneDarkTheme::text())
+                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _, _, cx| {
@@ -962,15 +962,15 @@ impl Render for ControlsWindow {
                                     .py_3()
                                     .rounded_md()
                                     .when(is_valid, |this| {
-                                        this.bg(rgb(0x2e7d32))
+                                        this.bg(OneDarkTheme::success())
                                             .cursor_pointer()
-                                            .text_color(rgb(0xffffff))
-                                            .hover(|style| style.bg(rgb(0x388e3c)))
+                                            .text_color(OneDarkTheme::text())
+                                            .hover(|style| style.bg(OneDarkTheme::success()))
                                     })
                                     .when(!is_valid, |this| {
-                                        this.bg(rgb(0x404040))
+                                        this.bg(OneDarkTheme::element_background())
                                             .cursor_not_allowed()
-                                            .text_color(rgb(0x666666))
+                                            .text_color(OneDarkTheme::text_disabled())
                                     })
                                     .on_mouse_down(
                                         MouseButton::Left,
@@ -1030,9 +1030,9 @@ impl Render for ControlsWindow {
                             .flex_col()
                             .gap_2()
                             .p_2()
-                            .bg(rgb(0x1a1a1a))
+                            .bg(OneDarkTheme::surface_background())
                             .border_1()
-                            .border_color(rgb(0x333333))
+                            .border_color(OneDarkTheme::border_variant())
                             .rounded(px(4.))
                             .min_w(px(250.0))
                             // Top row: Display subtitles, Bold, Italic checkboxes
@@ -1065,13 +1065,13 @@ impl Render for ControlsWindow {
                                                                     .read(cx)
                                                                     .is_checked()
                                                                 {
-                                                                    rgb(0x4caf50)
+                                                                    OneDarkTheme::success()
                                                                 } else {
-                                                                    rgb(0x2d2d2d)
+                                                                    OneDarkTheme::element_background()
                                                                 },
                                                             )
                                                             .border_1()
-                                                            .border_color(rgb(0x444444))
+                                                            .border_color(OneDarkTheme::border())
                                                             .rounded(px(2.))
                                                             .cursor_pointer()
                                                             .hover(|style| {
@@ -1081,9 +1081,8 @@ impl Render for ControlsWindow {
                                                                         .read(cx)
                                                                         .is_checked()
                                                                     {
-                                                                        rgb(0x66bb6a)
-                                                                    } else {
-                                                                        rgb(0x353535)
+                                                                        OneDarkTheme::success()                                                                    } else {
+                                                                        OneDarkTheme::element_hover()
                                                                     },
                                                                 )
                                                             })
@@ -1108,9 +1107,9 @@ impl Render for ControlsWindow {
                                                                     el.child(
                                                                         div()
                                                                             .text_xs()
-                                                                            .text_color(rgb(
-                                                                                0xffffff,
-                                                                            ))
+                                                                            .text_color(
+                                                                                OneDarkTheme::text(),
+                                                                            )
                                                                             .child("✓"),
                                                                     )
                                                                 },
@@ -1119,7 +1118,7 @@ impl Render for ControlsWindow {
                                                     .child(
                                                         div()
                                                             .text_xs()
-                                                            .text_color(rgb(0xcccccc))
+                                                            .text_color(OneDarkTheme::text_muted())
                                                             .child("Bold"),
                                                     ),
                                             )
@@ -1140,13 +1139,13 @@ impl Render for ControlsWindow {
                                                                     .read(cx)
                                                                     .is_checked()
                                                                 {
-                                                                    rgb(0x4caf50)
+                                                                    OneDarkTheme::success()
                                                                 } else {
-                                                                    rgb(0x2d2d2d)
+                                                                    OneDarkTheme::element_background()
                                                                 },
                                                             )
                                                             .border_1()
-                                                            .border_color(rgb(0x444444))
+                                                            .border_color(OneDarkTheme::border())
                                                             .rounded(px(2.))
                                                             .cursor_pointer()
                                                             .hover(|style| {
@@ -1156,9 +1155,8 @@ impl Render for ControlsWindow {
                                                                         .read(cx)
                                                                         .is_checked()
                                                                     {
-                                                                        rgb(0x66bb6a)
-                                                                    } else {
-                                                                        rgb(0x353535)
+                                                                        OneDarkTheme::success()                                                                    } else {
+                                                                        OneDarkTheme::element_hover()
                                                                     },
                                                                 )
                                                             })
@@ -1183,9 +1181,9 @@ impl Render for ControlsWindow {
                                                                     el.child(
                                                                         div()
                                                                             .text_xs()
-                                                                            .text_color(rgb(
-                                                                                0xffffff,
-                                                                            ))
+                                                                            .text_color(
+                                                                                OneDarkTheme::text(),
+                                                                            )
                                                                             .child("✓"),
                                                                     )
                                                                 },
@@ -1194,7 +1192,7 @@ impl Render for ControlsWindow {
                                                     .child(
                                                         div()
                                                             .text_xs()
-                                                            .text_color(rgb(0xcccccc))
+                                                            .text_color(OneDarkTheme::text_muted())
                                                             .child("Italic"),
                                                     ),
                                             ),
@@ -1218,7 +1216,7 @@ impl Render for ControlsWindow {
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            .child(div().text_xs().text_color(rgb(0xcccccc)).child(
+                                            .child(div().text_xs().text_color(OneDarkTheme::text_muted()).child(
                                                 format!(
                                                         "Size: {:.0}",
                                                         self.subtitle_font_size_slider

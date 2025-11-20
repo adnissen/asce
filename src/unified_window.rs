@@ -1,5 +1,6 @@
+use crate::theme::OneDarkTheme;
 use gpui::{
-    canvas, div, prelude::*, px, rgb, Bounds, Context, Corners, Entity, IntoElement, Render,
+    canvas, div, prelude::*, px, Bounds, Context, Corners, Entity, IntoElement, Render,
     RenderImage, Size, Window,
 };
 use serde::Deserialize;
@@ -228,7 +229,7 @@ impl Render for UnifiedWindow {
         div()
             .flex()
             .flex_col()
-            .bg(rgb(0x000000))
+            .bg(OneDarkTheme::editor_background())
             .size_full()
             // Close subtitle context menu on any click outside the subtitle window
             .on_mouse_down(
@@ -272,7 +273,7 @@ impl Render for UnifiedWindow {
                             .id("video-area")
                             .w(video_width)
                             .h(video_section_height)
-                            .bg(rgb(0x000000))
+                            .bg(OneDarkTheme::editor_background())
                             .when(!has_video_loaded, |el| {
                                 // Show rotating triangle when no video is loaded
                                 let triangle = self.generate_rotating_triangle();

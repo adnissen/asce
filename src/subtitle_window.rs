@@ -1,6 +1,7 @@
+use crate::theme::OneDarkTheme;
 use gpui::{
-    div, prelude::*, px, rgb, uniform_list, Context, Entity, IntoElement, MouseButton, Pixels,
-    Point, Render, ScrollStrategy, UniformListScrollHandle, Window,
+    div, prelude::*, px, uniform_list, Context, Entity, IntoElement, MouseButton, Pixels, Point,
+    Render, ScrollStrategy, UniformListScrollHandle, Window,
 };
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
@@ -407,7 +408,7 @@ impl Render for SubtitleWindow {
         div()
             .flex()
             .flex_col()
-            .bg(rgb(0x1a1a1a))
+            .bg(OneDarkTheme::surface_background())
             .size_full()
             .p_4()
             .gap_4()
@@ -471,21 +472,21 @@ impl Render for SubtitleWindow {
                                         .px_3()
                                         .py_2()
                                         .border_b_1()
-                                        .border_color(rgb(0x333333))
+                                        .border_color(OneDarkTheme::border_variant())
                                         .cursor_pointer()
                                         // Prioritize active search result > current video subtitle > regular search result
                                         .when(is_active_search_result, |div| {
-                                            div.bg(rgb(0xffa726)) // Bright orange for active search result
+                                            div.bg(OneDarkTheme::warning()) // Bright orange for active search result
                                         })
                                         .when(is_search_result && !is_active_search_result, |div| {
-                                            div.bg(rgb(0x5d4037)) // Dark brown for other search results
+                                            div.bg(OneDarkTheme::element_active()) // Dark brown for other search results
                                         })
                                         .when(
                                             is_current_video_subtitle
                                                 && !is_active_search_result
                                                 && !is_search_result,
                                             |div| {
-                                                div.bg(rgb(0x2e7d32)) // Green for current video subtitle
+                                                div.bg(OneDarkTheme::success()) // Green for current video subtitle
                                             },
                                         )
                                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -579,7 +580,7 @@ impl Render for SubtitleWindow {
                                                         .flex_row()
                                                         .gap_1()
                                                         .text_xs()
-                                                        .text_color(rgb(0x888888))
+                                                        .text_color(OneDarkTheme::text_muted())
                                                         .child(
                                                             div()
                                                                 .px_1()
@@ -587,7 +588,7 @@ impl Render for SubtitleWindow {
                                                                 .cursor_pointer()
                                                                 .hover(|style| {
                                                                     style
-                                                                        .bg(rgb(0x0069bd))
+                                                                        .bg(OneDarkTheme::info())
                                                                 })
                                                                 .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                                                                     // Show context menu for start time
@@ -639,7 +640,7 @@ impl Render for SubtitleWindow {
                                                                 .cursor_pointer()
                                                                 .hover(|style| {
                                                                     style
-                                                                        .bg(rgb(0x0069bd))
+                                                                        .bg(OneDarkTheme::info())
                                                                 })
                                                                 .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                                                                     // Show context menu for end time
@@ -687,7 +688,7 @@ impl Render for SubtitleWindow {
                                                 .child(
                                                     div()
                                                         .text_sm()
-                                                        .text_color(rgb(0xffffff))
+                                                        .text_color(OneDarkTheme::text())
                                                         .child(entry.text.clone()),
                                                 ),
                                         )
@@ -712,9 +713,9 @@ impl Render for SubtitleWindow {
                     .absolute()
                     .left(menu_state.position.x)
                     .top(menu_state.position.y)
-                    .bg(rgb(0x2a2a2a))
+                    .bg(OneDarkTheme::element_background())
                     .border_1()
-                    .border_color(rgb(0x404040))
+                    .border_color(OneDarkTheme::element_hover())
                     .rounded_md()
                     .shadow_lg()
                     .min_w(px(140.0))
@@ -746,8 +747,8 @@ impl Render for SubtitleWindow {
                                 .py_2()
                                 .cursor_pointer()
                                 .text_sm()
-                                .text_color(rgb(0xffffff))
-                                .hover(|style| style.bg(rgb(0x404040)))
+                                .text_color(OneDarkTheme::text())
+                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
                                 .on_mouse_down(MouseButton::Right, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -788,8 +789,8 @@ impl Render for SubtitleWindow {
                                 .py_2()
                                 .cursor_pointer()
                                 .text_sm()
-                                .text_color(rgb(0xffffff))
-                                .hover(|style| style.bg(rgb(0x404040)))
+                                .text_color(OneDarkTheme::text())
+                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
                                 .on_mouse_down(MouseButton::Right, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -830,8 +831,8 @@ impl Render for SubtitleWindow {
                                 .py_2()
                                 .cursor_pointer()
                                 .text_sm()
-                                .text_color(rgb(0xffffff))
-                                .hover(|style| style.bg(rgb(0x404040)))
+                                .text_color(OneDarkTheme::text())
+                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
                                 .on_mouse_down(MouseButton::Right, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -873,8 +874,8 @@ impl Render for SubtitleWindow {
                                 .py_2()
                                 .cursor_pointer()
                                 .text_sm()
-                                .text_color(rgb(0xffffff))
-                                .hover(|style| style.bg(rgb(0x404040)))
+                                .text_color(OneDarkTheme::text())
+                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
                                 .on_mouse_down(MouseButton::Right, |_, _, cx| {
                                     cx.stop_propagation();
                                 })

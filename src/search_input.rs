@@ -1,5 +1,6 @@
+use crate::theme::OneDarkTheme;
 use gpui::{
-    actions, div, prelude::*, rgb, App, Bounds, Context, CursorStyle, Element, ElementId,
+    actions, div, prelude::*, App, Bounds, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId,
     LayoutId, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window,
 };
@@ -230,15 +231,15 @@ impl Element for SearchInputElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), gpui::hsla(0., 0., 1., 0.4))
+            (input.placeholder.clone(), OneDarkTheme::text_placeholder())
         } else {
-            (content, style.color)
+            (content, OneDarkTheme::text())
         };
 
         let run = TextRun {
             len: display_text.len(),
             font: style.font(),
-            color: text_color,
+            color: text_color.into(),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -289,16 +290,16 @@ impl Render for SearchInput {
             .w_full()
             .px_3()
             .py_2()
-            .bg(rgb(0x2a2a2a))
+            .bg(OneDarkTheme::element_background())
             .border_1()
             .border_color(if is_focused {
-                rgb(0x4caf50)
+                OneDarkTheme::border_focused()
             } else {
-                rgb(0x444444)
+                OneDarkTheme::border()
             })
             .rounded_md()
             .text_sm()
-            .text_color(rgb(0xffffff))
+            .text_color(OneDarkTheme::text())
             .cursor(CursorStyle::IBeam)
             .key_context("SearchInput")
             .track_focus(&self.focus_handle(cx))

@@ -1,4 +1,5 @@
-use gpui::{div, prelude::*, rgb, Context, Entity, IntoElement, PathPromptOptions, Render, Window};
+use crate::theme::OneDarkTheme;
+use gpui::{div, prelude::*, Context, Entity, IntoElement, PathPromptOptions, Render, Window};
 
 use crate::custom_titlebar::CustomTitlebar;
 use crate::ffmpeg_export;
@@ -20,7 +21,7 @@ impl Render for InitialWindow {
         div()
             .flex()
             .flex_col()
-            .bg(rgb(0x1a1a1a))
+            .bg(OneDarkTheme::surface_background())
             .size_full()
             .child(self.titlebar.clone())
             .child(
@@ -35,12 +36,12 @@ impl Render for InitialWindow {
                     .id("open-file-button")
                     .px_8()
                     .py_4()
-                    .bg(rgb(0x404040))
+                    .bg(OneDarkTheme::element_background())
                     .rounded_lg()
                     .cursor_pointer()
                     .text_xl()
-                    .text_color(rgb(0xffffff))
-                    .hover(|style| style.bg(rgb(0x505050)))
+                    .text_color(OneDarkTheme::text())
+                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
                     .on_click(|_, _window, cx| {
                         let paths = cx.prompt_for_paths(PathPromptOptions {
                             files: true,

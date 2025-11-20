@@ -21,6 +21,7 @@ mod slider;
 mod subtitle_detector;
 mod subtitle_extractor;
 mod subtitle_window;
+mod theme;
 mod time_input;
 mod unified_window;
 mod video_player;
