@@ -21,6 +21,10 @@ impl CustomTitlebar {
         }
     }
 
+    pub fn set_title(&mut self, title: impl Into<SharedString>) {
+        self.title = title.into();
+    }
+
     #[cfg(target_os = "windows")]
     fn start_window_drag(window: &mut gpui::Window) {
         // Get the raw window handle (HWND)

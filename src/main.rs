@@ -292,7 +292,7 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
         focus: true,
         is_movable: true,
         titlebar: Some(gpui::TitlebarOptions {
-            title: Some(file_name.into()),
+            title: Some(file_name.clone().into()),
             appears_transparent: true,
             traffic_light_position: Some(gpui::point(px(8.0), px(12.0))),
             ..Default::default()
@@ -339,6 +339,16 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
         state.source_video_width = video_width;
         state.has_video_loaded = true; // Mark that a video has been loaded
     });
+
+    // Update the titlebar with the filename
+    unified_window
+        .update(cx, |unified_window, _, cx| {
+            unified_window.titlebar.update(cx, |titlebar, cx| {
+                titlebar.set_title(file_name.clone());
+                cx.notify();
+            });
+        })
+        .ok();
 
     // Extract and set the display handle for the video window
     if let Some(child_view_ptr) = extract_and_set_display_handle(cx) {
