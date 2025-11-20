@@ -324,7 +324,7 @@ impl RenderOnce for Slider {
                             .relative()
                             .w_full()
                             .h(px(6.0))
-                            .bg(OneDarkTheme::element_background())
+                            .bg(OneDarkTheme::element_hover())
                             .rounded_full()
                             .child(
                                 div()

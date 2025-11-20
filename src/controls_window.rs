@@ -628,12 +628,12 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .px_2()
                                                     .py_1()
-                                                    .bg(OneDarkTheme::info())
+                                                    .bg(OneDarkTheme::element_hover())
                                                     .rounded_md()
                                                     .cursor_pointer()
                                                     .text_xs()
                                                     .text_color(OneDarkTheme::text())
-                                                    .hover(|style| style.bg(OneDarkTheme::info()))
+                                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
@@ -689,12 +689,12 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .px_2()
                                                     .py_1()
-                                                    .bg(OneDarkTheme::error())
+                                                    .bg(OneDarkTheme::element_hover())
                                                     .rounded_md()
                                                     .cursor_pointer()
                                                     .text_xs()
                                                     .text_color(OneDarkTheme::text())
-                                                    .hover(|style| style.bg(OneDarkTheme::error()))
+                                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
@@ -917,11 +917,11 @@ impl Render for ControlsWindow {
                                 div()
                                     .px_6()
                                     .py_3()
-                                    .bg(OneDarkTheme::element_background())
+                                    .bg(OneDarkTheme::element_hover())
                                     .rounded_md()
                                     .cursor_pointer()
                                     .text_color(OneDarkTheme::text())
-                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _, _, cx| {
@@ -962,10 +962,10 @@ impl Render for ControlsWindow {
                                     .py_3()
                                     .rounded_md()
                                     .when(is_valid, |this| {
-                                        this.bg(OneDarkTheme::success())
+                                        this.bg(OneDarkTheme::element_hover())
                                             .cursor_pointer()
                                             .text_color(OneDarkTheme::text())
-                                            .hover(|style| style.bg(OneDarkTheme::success()))
+                                            .hover(|style| style.bg(OneDarkTheme::element_background()))
                                     })
                                     .when(!is_valid, |this| {
                                         this.bg(OneDarkTheme::element_background())
