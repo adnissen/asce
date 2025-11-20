@@ -26,6 +26,7 @@ mod time_input;
 mod unified_window;
 mod video_player;
 mod video_player_window;
+mod virtual_list;
 
 use gpui::{
     actions, px, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Global, Menu,

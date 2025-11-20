@@ -1,8 +1,10 @@
 use crate::theme::OneDarkTheme;
+use crate::virtual_list::{v_virtual_list, VirtualListScrollHandle};
 use gpui::{
-    div, prelude::*, px, uniform_list, Context, Entity, IntoElement, MouseButton, Pixels, Point,
-    Render, ScrollStrategy, UniformListScrollHandle, Window,
+    div, prelude::*, px, size, Context, Entity, IntoElement, MouseButton, Pixels, Point, Render,
+    ScrollStrategy, Size, Window,
 };
+use std::rc::Rc;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::search_input::{self, SearchInput};
@@ -27,7 +29,7 @@ pub struct SubtitleWindow {
     subtitle_entries: Vec<SubtitleEntry>,
     current_position: f32,                 // Current video position in seconds
     current_subtitle_index: Option<usize>, // Index of the currently active subtitle (from video position)
-    scroll_handle: UniformListScrollHandle,
+    scroll_handle: VirtualListScrollHandle,
     search_result_indices: Vec<usize>, // All indices that match the search
     current_search_result_index: Option<usize>, // Index within search_result_indices of the current result
     last_scrolled_to_search: Option<usize>, // Last search result we scrolled to (to avoid re-scrolling)
@@ -174,7 +176,7 @@ impl SubtitleWindow {
             subtitle_entries: Vec::new(),
             current_position: 0.0,
             current_subtitle_index: None,
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle: VirtualListScrollHandle::new(),
             search_result_indices: Vec::new(),
             current_search_result_index: None,
             last_scrolled_to_search: None,
@@ -405,6 +407,16 @@ impl Render for SubtitleWindow {
         let search_result_indices = self.search_result_indices.clone();
         let current_search_subtitle_idx = self.current_search_subtitle_index();
 
+        // Calculate item sizes for virtual list (fixed height of 60px for each item)
+        let item_sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
+            (0..item_count)
+                .map(|_| size(px(0.0), px(60.0))) // width will be measured, height is 60px
+                .collect(),
+        );
+
+        // Get the view entity before entering the div builder
+        let view = cx.entity().clone();
+
         div()
             .flex()
             .flex_col()
@@ -454,11 +466,15 @@ impl Render for SubtitleWindow {
                     ),
             )
             .child(
-                // Uniform list for displaying subtitles
+                // Virtual list for displaying subtitles
                 div().id("subtitle-list-container").flex_1().w_full().child(
-                    uniform_list("subtitle-list", item_count, move |range, _window, _cx| {
-                        range
-                            .filter_map(|idx| {
+                    v_virtual_list(
+                        view,
+                        "subtitle-list",
+                        item_sizes,
+                        move |_view, range, _window, _cx| {
+                            range
+                                .filter_map(|idx| {
                                 entries.get(idx).map(|entry| {
                                     let is_current_video_subtitle =
                                         current_subtitle_index == Some(idx);
@@ -694,9 +710,10 @@ impl Render for SubtitleWindow {
                                         )
                                 })
                             })
-                            .collect()
-                    })
-                    .track_scroll(self.scroll_handle.clone())
+                            .collect::<Vec<_>>()
+                        },
+                    )
+                    .track_scroll(&self.scroll_handle)
                     .w_full()
                     .h_full(),
                 ),
