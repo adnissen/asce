@@ -253,36 +253,13 @@ fn quit(_: &Quit, cx: &mut App) {
 
 /// Create the unified video player window and load the video file
 pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
-    // Close existing windows by calling remove_window()
-    println!("Closing existing windows");
+    // Get handles to existing windows before creating new ones
+    println!("Preparing to create new video windows");
 
     // Get handles before clearing state
     let app_state = cx.global::<AppState>();
     let initial_window = app_state.initial_window;
-    let unified_window = app_state.unified_window;
-
-    // Close the windows by calling remove_window() on each
-    if let Some(window) = initial_window {
-        window
-            .update(cx, |_, window, _| {
-                window.remove_window();
-            })
-            .ok();
-    }
-    if let Some(window) = unified_window {
-        window
-            .update(cx, |_, window, _| {
-                window.remove_window();
-            })
-            .ok();
-    }
-
-    // Clear the handles from state
-    cx.update_global::<AppState, _>(|state, _| {
-        state.initial_window = None;
-        state.unified_window = None;
-        state.video_nsview = None;
-    });
+    let old_unified_window = app_state.unified_window;
 
     // Extract just the file name from the path for the window title
     let file_name = std::path::Path::new(&path_string)
@@ -297,7 +274,7 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
     let total_width = 1260.0;
     let total_height = 720.0;
 
-    // Create the unified window
+    // Create the unified window FIRST before closing the initial window
     let unified_window_options = WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds {
             origin: gpui::point(px(20.0), px(20.0)),
@@ -323,13 +300,33 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
 
     println!("Unified window created");
 
+    // Now that the new window is created, close the old windows
+    println!("Closing old windows");
+
+    if let Some(window) = initial_window {
+        window
+            .update(cx, |_, window, _| {
+                window.remove_window();
+            })
+            .ok();
+    }
+    if let Some(window) = old_unified_window {
+        window
+            .update(cx, |_, window, _| {
+                window.remove_window();
+            })
+            .ok();
+    }
+
     // Get video resolution before updating AppState
     let (video_width, _video_height) = crate::ffmpeg_export::get_video_resolution(&path_string)
         .unwrap_or((1920, 1080));
 
     // Update AppState with new window, file path, and source video resolution
     cx.update_global::<AppState, _>(|state, _| {
+        state.initial_window = None;
         state.unified_window = Some(unified_window.into());
+        state.video_nsview = None;
         state.file_path = Some(path_string.clone());
         state.source_video_width = video_width;
     });
