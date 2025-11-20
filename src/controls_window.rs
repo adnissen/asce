@@ -779,9 +779,9 @@ impl Render for ControlsWindow {
                                                                     .read(cx)
                                                                     .is_checked()
                                                                 {
-                                                                    OneDarkTheme::success()
-                                                                } else {
                                                                     OneDarkTheme::element_background()
+                                                                } else {
+                                                                    OneDarkTheme::border_transparent()
                                                                 },
                                                             )
                                                             .border_1()
@@ -795,7 +795,8 @@ impl Render for ControlsWindow {
                                                                         .read(cx)
                                                                         .is_checked()
                                                                     {
-                                                                        OneDarkTheme::success()                                                                    } else {
+                                                                        OneDarkTheme::element_background()
+                                                                    } else {
                                                                         OneDarkTheme::element_hover()
                                                                     },
                                                                 )
@@ -1065,9 +1066,9 @@ impl Render for ControlsWindow {
                                                                     .read(cx)
                                                                     .is_checked()
                                                                 {
-                                                                    OneDarkTheme::success()
-                                                                } else {
                                                                     OneDarkTheme::element_background()
+                                                                } else {
+                                                                    OneDarkTheme::border_transparent()
                                                                 },
                                                             )
                                                             .border_1()
@@ -1081,7 +1082,8 @@ impl Render for ControlsWindow {
                                                                         .read(cx)
                                                                         .is_checked()
                                                                     {
-                                                                        OneDarkTheme::success()                                                                    } else {
+                                                                        OneDarkTheme::element_background()
+                                                                    } else {
                                                                         OneDarkTheme::element_hover()
                                                                     },
                                                                 )
@@ -1139,9 +1141,9 @@ impl Render for ControlsWindow {
                                                                     .read(cx)
                                                                     .is_checked()
                                                                 {
-                                                                    OneDarkTheme::success()
-                                                                } else {
                                                                     OneDarkTheme::element_background()
+                                                                } else {
+                                                                    OneDarkTheme::border_transparent()
                                                                 },
                                                             )
                                                             .border_1()
@@ -1155,7 +1157,8 @@ impl Render for ControlsWindow {
                                                                         .read(cx)
                                                                         .is_checked()
                                                                     {
-                                                                        OneDarkTheme::success()                                                                    } else {
+                                                                        OneDarkTheme::element_background()
+                                                                    } else {
                                                                         OneDarkTheme::element_hover()
                                                                     },
                                                                 )
