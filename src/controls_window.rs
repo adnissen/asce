@@ -14,8 +14,8 @@ use crate::AppState;
 pub struct ControlsWindow {
     slider_state: Entity<SliderState>,
     display_subtitles: Entity<CheckboxState>,
-    clip_start_input: Entity<TimeInput>,
-    clip_end_input: Entity<TimeInput>,
+    pub clip_start_input: Entity<TimeInput>,
+    pub clip_end_input: Entity<TimeInput>,
     // Subtitle styling controls
     subtitle_font_select: Entity<SelectState<String>>,
     subtitle_font_size_slider: Entity<SliderState>,
@@ -25,8 +25,8 @@ pub struct ControlsWindow {
     current_position: f32,
     duration: f32,
     is_playing: bool,
-    clip_start: Option<f32>, // stored in milliseconds
-    clip_end: Option<f32>,   // stored in milliseconds
+    pub clip_start: Option<f32>, // stored in milliseconds
+    pub clip_end: Option<f32>,   // stored in milliseconds
     is_exporting: bool,
     is_playing_clip: bool,
     clip_playback_end: Option<f32>, // milliseconds - when to stop during clip playback
@@ -332,6 +332,18 @@ impl ControlsWindow {
         });
 
         cx.notify();
+    }
+
+    /// Check if there's a valid clip (start and end times set with start < end)
+    pub fn has_valid_clip(&self, cx: &Context<Self>) -> bool {
+        let start_ms = self
+            .clip_start_input
+            .read(cx)
+            .parse_time_ms()
+            .or(self.clip_start);
+        let end_ms = self.clip_end_input.read(cx).parse_time_ms().or(self.clip_end);
+
+        start_ms.is_some() && end_ms.is_some() && start_ms.unwrap() < end_ms.unwrap()
     }
 
     fn handle_export_click(&mut self, cx: &mut Context<Self>) {
