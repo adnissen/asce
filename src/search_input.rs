@@ -14,6 +14,8 @@ pub struct SearchInput {
     placeholder: SharedString,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    fill_height: bool, // Whether to fill the parent's height
+    multiline: bool,   // Whether to support multiple lines (Enter inserts newline)
 }
 
 impl SearchInput {
@@ -24,11 +26,30 @@ impl SearchInput {
             placeholder: "Search subtitles...".into(),
             last_layout: None,
             last_bounds: None,
+            fill_height: false,
+            multiline: false,
         }
     }
 
     pub fn content(&self) -> String {
         self.content.to_string()
+    }
+
+    pub fn set_placeholder(&mut self, placeholder: impl Into<SharedString>) {
+        self.placeholder = placeholder.into();
+    }
+
+    pub fn set_fill_height(&mut self, fill_height: bool) {
+        self.fill_height = fill_height;
+    }
+
+    pub fn set_multiline(&mut self, multiline: bool) {
+        self.multiline = multiline;
+    }
+
+    pub fn set_content(&mut self, content: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.content = content.into();
+        cx.notify();
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -41,6 +62,15 @@ impl SearchInput {
         content.pop();
         self.content = content.into();
         cx.notify();
+    }
+
+    fn insert_newline(&mut self, _: &Enter, _: &mut Window, cx: &mut Context<Self>) {
+        if self.multiline {
+            let mut content = self.content.to_string();
+            content.push('\n');
+            self.content = content.into();
+            cx.notify();
+        }
     }
 }
 
@@ -181,7 +211,7 @@ impl SearchInputElement {
 }
 
 pub struct PrepaintState {
-    line: Option<ShapedLine>,
+    lines: Vec<ShapedLine>,
 }
 
 impl IntoElement for SearchInputElement {
@@ -211,9 +241,24 @@ impl Element for SearchInputElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        let input = self.input.read(cx);
         let mut style = Style::default();
         style.size.width = gpui::relative(1.).into();
-        style.size.height = window.line_height().into();
+
+        // Calculate height based on multiline support
+        if input.multiline && input.fill_height {
+            // Fill parent height when both multiline and fill_height are true
+            style.size.height = gpui::relative(1.).into();
+        } else if input.multiline {
+            // Calculate height based on number of lines
+            let line_count = input.content.chars().filter(|&c| c == '\n').count() + 1;
+            let line_count = line_count.max(1); // At least one line
+            style.size.height = (window.line_height() * line_count as f32).into();
+        } else {
+            // Single line height for non-multiline inputs
+            style.size.height = window.line_height().into();
+        }
+
         (window.request_layout(style, [], cx), ())
     }
 
@@ -229,6 +274,7 @@ impl Element for SearchInputElement {
         let input = self.input.read(cx);
         let content = input.content.clone();
         let style = window.text_style();
+        let font_size = style.font_size.to_pixels(window.rem_size());
 
         let (display_text, text_color) = if content.is_empty() {
             (input.placeholder.clone(), OneDarkTheme::text_placeholder())
@@ -236,21 +282,44 @@ impl Element for SearchInputElement {
             (content, OneDarkTheme::text())
         };
 
-        let run = TextRun {
-            len: display_text.len(),
-            font: style.font(),
-            color: text_color.into(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
+        let mut lines = Vec::new();
 
-        let font_size = style.font_size.to_pixels(window.rem_size());
-        let line = window
-            .text_system()
-            .shape_line(display_text, font_size, &[run], None);
+        if input.multiline {
+            // Split by newlines and shape each line separately
+            let text_lines: Vec<String> = display_text.split('\n').map(|s| s.to_string()).collect();
+            for text_line in text_lines {
+                let run = TextRun {
+                    len: text_line.len(),
+                    font: style.font(),
+                    color: text_color.into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
 
-        PrepaintState { line: Some(line) }
+                let shaped_line = window
+                    .text_system()
+                    .shape_line(text_line.into(), font_size, &[run], None);
+                lines.push(shaped_line);
+            }
+        } else {
+            // Single line
+            let run = TextRun {
+                len: display_text.len(),
+                font: style.font(),
+                color: text_color.into(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+
+            let line = window
+                .text_system()
+                .shape_line(display_text, font_size, &[run], None);
+            lines.push(line);
+        }
+
+        PrepaintState { lines }
     }
 
     fn paint(
@@ -270,24 +339,36 @@ impl Element for SearchInputElement {
             cx,
         );
 
-        let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
+        let line_height = window.line_height();
+        let mut y_offset = bounds.origin.y;
 
-        self.input.update(cx, |input, _cx| {
-            input.last_layout = Some(line);
-            input.last_bounds = Some(bounds);
-        });
+        // Paint each line at the correct vertical position
+        for line in &prepaint.lines {
+            let origin = gpui::point(bounds.origin.x, y_offset);
+            line.paint(origin, line_height, window, cx).unwrap();
+            y_offset += line_height;
+        }
+
+        // Store the last line for compatibility (if needed)
+        if let Some(last_line) = prepaint.lines.last() {
+            self.input.update(cx, |input, _cx| {
+                input.last_layout = Some(last_line.clone());
+                input.last_bounds = Some(bounds);
+            });
+        }
     }
 }
 
 impl Render for SearchInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_focused = self.focus_handle.is_focused(window);
+        let fill_height = self.fill_height;
+        let multiline = self.multiline;
 
         div()
             .id("search-input")
             .w_full()
+            .when(fill_height, |div| div.h_full())
             .px_3()
             .py_2()
             .bg(OneDarkTheme::element_background())
@@ -304,6 +385,9 @@ impl Render for SearchInput {
             .key_context("SearchInput")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::backspace))
+            .when(multiline, |div| {
+                div.on_action(cx.listener(Self::insert_newline))
+            })
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, window, cx| {

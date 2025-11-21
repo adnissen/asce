@@ -9,6 +9,7 @@ use std::rc::Rc;
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::search_input::{self, SearchInput};
 use crate::select::{Select, SelectEvent, SelectItem, SelectState};
+use crate::subtitle_clip_tab::SubtitleClipTab;
 use crate::subtitle_detector::SubtitleStream;
 use crate::subtitle_extractor::SubtitleEntry;
 use crate::video_player::ClockTime;
@@ -44,7 +45,7 @@ pub struct SubtitleWindow {
     last_submitted_search_term: Option<String>, // Last search term submitted via Enter (to distinguish NEW vs SAME searches)
     pub context_menu: Option<ContextMenuState>, // Right-click context menu state (public so unified window can close it)
     active_tab: SubtitleTab,               // Currently active tab
-    custom_subtitle_input: Entity<SearchInput>, // Text input for custom subtitles on Clip tab
+    clip_tab: Entity<SubtitleClipTab>,     // Clip tab component
     controls: Option<Entity<crate::controls_window::ControlsWindow>>, // Reference to controls window to check clip state
 }
 
@@ -115,7 +116,12 @@ impl SubtitleWindow {
         });
 
         // Set the subtitle entries
-        self.subtitle_entries = data.first_stream_entries;
+        self.subtitle_entries = data.first_stream_entries.clone();
+
+        // Update clip tab with new subtitle entries
+        self.clip_tab.update(cx, |clip_tab, _cx| {
+            clip_tab.set_subtitle_entries(data.first_stream_entries);
+        });
 
         cx.notify();
     }
@@ -179,8 +185,8 @@ impl SubtitleWindow {
         // Create search input
         let search_input = cx.new(|cx| SearchInput::new(cx));
 
-        // Create custom subtitle input for Clip tab
-        let custom_subtitle_input = cx.new(|cx| SearchInput::new(cx));
+        // Create clip tab component
+        let clip_tab = cx.new(|cx| SubtitleClipTab::new(cx));
 
         Self {
             select_state,
@@ -197,14 +203,19 @@ impl SubtitleWindow {
             last_submitted_search_term: None,
             context_menu: None,
             active_tab: SubtitleTab::Video, // Default to Video tab
-            custom_subtitle_input,
+            clip_tab,
             controls: None, // Will be set by UnifiedWindow after creation
         }
     }
 
     /// Set the controls window reference (called by UnifiedWindow)
-    pub fn set_controls(&mut self, controls: Entity<crate::controls_window::ControlsWindow>) {
-        self.controls = Some(controls);
+    pub fn set_controls(&mut self, controls: Entity<crate::controls_window::ControlsWindow>, cx: &mut Context<Self>) {
+        self.controls = Some(controls.clone());
+
+        // Also set controls on the clip tab
+        self.clip_tab.update(cx, |clip_tab, _cx| {
+            clip_tab.set_controls(controls);
+        });
     }
 
     /// Load subtitle streams for the current video file
@@ -405,6 +416,12 @@ impl SubtitleWindow {
                 // Parse SRT content
                 self.subtitle_entries = crate::subtitle_extractor::parse_srt(&srt_content);
                 println!("Loaded {} subtitle entries", self.subtitle_entries.len());
+
+                // Update clip tab with new subtitle entries
+                let entries_clone = self.subtitle_entries.clone();
+                self.clip_tab.update(cx, |clip_tab, _cx| {
+                    clip_tab.set_subtitle_entries(entries_clone);
+                });
 
                 cx.notify();
             }
@@ -841,40 +858,7 @@ impl Render for SubtitleWindow {
             })
             // Clip tab content
             .when(active_tab == SubtitleTab::Clip, |parent| {
-                parent.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_4()
-                        .w_full()
-                        .flex_1()
-                        .child(
-                            div()
-                                .text_lg()
-                                .text_color(OneDarkTheme::text())
-                                .child("Custom Subtitles"),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(OneDarkTheme::text_muted())
-                                .child("Enter custom subtitles for your clip:"),
-                        )
-                        .child(
-                            div()
-                                .w_full()
-                                .h(px(200.0))
-                                .px_3()
-                                .py_2()
-                                .bg(OneDarkTheme::element_background())
-                                .border_1()
-                                .border_color(OneDarkTheme::border())
-                                .rounded_md()
-                                .text_sm()
-                                .text_color(OneDarkTheme::text())
-                                .child(self.custom_subtitle_input.clone()),
-                        ),
-                )
+                parent.child(self.clip_tab.clone())
             })
             // Render context menu if active
             .children(self.context_menu.as_ref().map(|menu_state| {

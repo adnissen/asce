@@ -20,6 +20,7 @@ mod select;
 mod slider;
 mod subtitle_detector;
 mod subtitle_extractor;
+mod subtitle_clip_tab;
 mod subtitle_window;
 mod theme;
 mod time_input;

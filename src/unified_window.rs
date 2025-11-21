@@ -52,8 +52,8 @@ impl UnifiedWindow {
         let subtitles = cx.new(|cx| SubtitleWindow::new(cx));
 
         // Give subtitles a reference to controls so it can check clip state
-        subtitles.update(cx, |subs, _| {
-            subs.set_controls(controls.clone());
+        subtitles.update(cx, |subs, cx| {
+            subs.set_controls(controls.clone(), cx);
         });
 
         // Load triangle frames from JSON file
