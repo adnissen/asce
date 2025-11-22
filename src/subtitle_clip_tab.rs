@@ -1,13 +1,15 @@
+use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::search_input::SearchInput;
 use crate::subtitle_extractor::SubtitleEntry;
-use gpui::{div, prelude::*, px, Context, Entity, IntoElement, Render, ScrollHandle, Window};
+use gpui::{div, prelude::*, Context, Entity, IntoElement, Render, ScrollHandle, Window};
 
 /// Clip tab for custom subtitle editing
 pub struct SubtitleClipTab {
     custom_subtitle_input: Entity<SearchInput>,
     controls: Option<Entity<crate::controls_window::ControlsWindow>>,
     subtitle_entries: Vec<SubtitleEntry>, // Reference to subtitle entries
-    scroll_handle: ScrollHandle,         // For scrolling the text box
+    scroll_handle: ScrollHandle,          // For scrolling the text box
+    custom_checkbox: Entity<CheckboxState>, // Checkbox for custom subtitle mode
 }
 
 impl SubtitleClipTab {
@@ -21,11 +23,25 @@ impl SubtitleClipTab {
             input
         });
 
+        // Create checkbox for custom mode (default off)
+        let custom_checkbox = cx.new(|_cx| CheckboxState::new(false));
+
+        // Subscribe to checkbox changes to update global state
+        cx.subscribe(&custom_checkbox, |_this, _, event: &CheckboxEvent, cx| {
+            if let CheckboxEvent::Change(checked) = event {
+                cx.update_global::<crate::AppState, _>(|state, _| {
+                    state.custom_subtitle_mode = *checked;
+                });
+            }
+        })
+        .detach();
+
         Self {
             custom_subtitle_input,
             controls: None,
             subtitle_entries: Vec::new(),
             scroll_handle: ScrollHandle::new(),
+            custom_checkbox,
         }
     }
 
@@ -59,14 +75,18 @@ impl SubtitleClipTab {
         // Format without sequence numbers
         let mut srt_text = String::new();
         for (_index, entry) in clip_subtitles {
-            srt_text.push_str(&format!("{} --> {}\n", entry.format_start_time(), entry.format_end_time()));
+            srt_text.push_str(&format!(
+                "{} --> {}\n",
+                entry.format_start_time(),
+                entry.format_end_time()
+            ));
             srt_text.push_str(&format!("{}\n", entry.text));
             srt_text.push('\n');
         }
 
-        // Update the text box
+        // Update the text box without resetting cursor position
         self.custom_subtitle_input.update(cx, |input, cx| {
-            input.set_content(srt_text.clone(), cx);
+            input.set_content_with_cursor(srt_text.clone(), false, cx);
         });
     }
 
@@ -76,11 +96,13 @@ impl SubtitleClipTab {
             let controls = controls_entity.read(cx);
 
             // Get clip times (as f32 milliseconds)
-            let start_ms_f32 = controls.clip_start_input
+            let start_ms_f32 = controls
+                .clip_start_input
                 .read(cx)
                 .parse_time_ms()
                 .or(controls.clip_start);
-            let end_ms_f32 = controls.clip_end_input
+            let end_ms_f32 = controls
+                .clip_end_input
                 .read(cx)
                 .parse_time_ms()
                 .or(controls.clip_end);
@@ -99,20 +121,34 @@ impl SubtitleClipTab {
 
 impl Render for SubtitleClipTab {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Check and update clip subtitles when rendering
-        self.check_and_update_clip(cx);
+        // keep the clip subtitles aligned with the real ones unless the custom checkbox is checked
+        if !self.custom_checkbox.read(cx).is_checked() {
+            self.check_and_update_clip(cx);
+        }
 
         div()
             .w_full()
             .flex_1()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                // Checkbox above the text input
+                div()
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .child(Checkbox::new(&self.custom_checkbox).label("custom")),
+            )
             .child(
                 div()
                     .id("clip-text-scroll")
                     .w_full()
-                    .h(gpui::relative(0.5)) // Half height
-                    .overflow_hidden()
+                    .flex_1()
+                    .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
-                    .child(self.custom_subtitle_input.clone())
+                    .child(self.custom_subtitle_input.clone()),
             )
     }
 }

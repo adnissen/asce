@@ -411,6 +411,7 @@ pub struct AppState {
     pub subtitle_settings: SubtitleSettings,
     pub source_video_width: u32, // Horizontal resolution of the source video for subtitle scaling
     pub has_video_loaded: bool,  // Whether a video has been loaded
+    pub custom_subtitle_mode: bool, // Whether custom subtitle mode is enabled in clip tab
 }
 
 impl AppState {
@@ -427,6 +428,7 @@ impl AppState {
             subtitle_settings: SubtitleSettings::default(),
             source_video_width: 1920, // Default to 1920 (will be updated when video loads)
             has_video_loaded: false,  // No video loaded initially
+            custom_subtitle_mode: false, // Default to off
         }
     }
 

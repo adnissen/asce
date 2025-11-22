@@ -1,6 +1,6 @@
 use crate::theme::OneDarkTheme;
 use gpui::{
-    actions, div, prelude::*, App, Bounds, Context, CursorStyle, Element, ElementId,
+    actions, div, prelude::*, px, App, Bounds, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId,
     LayoutId, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window,
 };
@@ -14,8 +14,10 @@ pub struct SearchInput {
     placeholder: SharedString,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
-    fill_height: bool, // Whether to fill the parent's height
-    multiline: bool,   // Whether to support multiple lines (Enter inserts newline)
+    last_lines: Vec<ShapedLine>, // Store all shaped lines for cursor positioning
+    cursor_position: usize,       // Current cursor position (UTF-8 offset)
+    fill_height: bool,            // Whether to fill the parent's height
+    multiline: bool,              // Whether to support multiple lines (Enter inserts newline)
 }
 
 impl SearchInput {
@@ -26,6 +28,8 @@ impl SearchInput {
             placeholder: "Search subtitles...".into(),
             last_layout: None,
             last_bounds: None,
+            last_lines: Vec::new(),
+            cursor_position: 0,
             fill_height: false,
             multiline: false,
         }
@@ -48,26 +52,50 @@ impl SearchInput {
     }
 
     pub fn set_content(&mut self, content: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.set_content_with_cursor(content, true, cx);
+    }
+
+    pub fn set_content_with_cursor(&mut self, content: impl Into<SharedString>, reset_cursor: bool, cx: &mut Context<Self>) {
         self.content = content.into();
+        if reset_cursor {
+            // Move cursor to end when content is set
+            self.cursor_position = self.content.len();
+        } else {
+            // Clamp cursor position to content length
+            self.cursor_position = self.cursor_position.min(self.content.len());
+        }
         cx.notify();
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.content = "".into();
+        self.cursor_position = 0;
         cx.notify();
     }
 
     fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
-        let mut content = self.content.to_string();
-        content.pop();
-        self.content = content.into();
-        cx.notify();
+        if self.cursor_position > 0 {
+            let content = self.content.to_string();
+
+            // Find the start of the previous character
+            let mut prev_char_start = self.cursor_position - 1;
+            while prev_char_start > 0 && !content.is_char_boundary(prev_char_start) {
+                prev_char_start -= 1;
+            }
+
+            // Remove the character and update content
+            let new_content = content[..prev_char_start].to_string() + &content[self.cursor_position..];
+            self.cursor_position = prev_char_start;
+            self.content = new_content.into();
+            cx.notify();
+        }
     }
 
     fn insert_newline(&mut self, _: &Enter, _: &mut Window, cx: &mut Context<Self>) {
         if self.multiline {
             let mut content = self.content.to_string();
-            content.push('\n');
+            content.insert(self.cursor_position, '\n');
+            self.cursor_position += 1;
             self.content = content.into();
             cx.notify();
         }
@@ -93,9 +121,8 @@ impl EntityInputHandler for SearchInput {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let len = self.content.len();
         Some(UTF16Selection {
-            range: self.range_to_utf16(&(len..len)),
+            range: self.range_to_utf16(&(self.cursor_position..self.cursor_position)),
             reversed: false,
         })
     }
@@ -121,11 +148,14 @@ impl EntityInputHandler for SearchInput {
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .unwrap_or(content_len..content_len);
+            .unwrap_or(self.cursor_position..self.cursor_position);
 
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
+
+        // Update cursor position to end of inserted text
+        self.cursor_position = range.start + new_text.len();
         cx.notify();
     }
 
@@ -152,11 +182,53 @@ impl EntityInputHandler for SearchInput {
 
     fn character_index_for_point(
         &mut self,
-        _point: Point<Pixels>,
-        _window: &mut Window,
+        point: Point<Pixels>,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        Some(self.content.len())
+        let bounds = self.last_bounds?;
+        let lines = &self.last_lines;
+
+        if lines.is_empty() {
+            self.cursor_position = 0;
+            return Some(0);
+        }
+
+        let line_height = window.line_height();
+
+        // Determine which line was clicked
+        let relative_y = point.y - bounds.origin.y;
+        let line_index = ((relative_y / line_height).floor() as usize).min(lines.len() - 1);
+
+        // Calculate byte offset up to the start of this line
+        let mut byte_offset = 0;
+        let content_str = self.content.to_string();
+        let mut current_line = 0;
+
+        for ch in content_str.chars() {
+            if current_line >= line_index {
+                // We're on the target line, now find the character
+                break;
+            }
+            if ch == '\n' {
+                current_line += 1;
+            }
+            byte_offset += ch.len_utf8();
+        }
+
+        // Now find the character within the line
+        let shaped_line = &lines[line_index];
+        let relative_x = point.x - bounds.origin.x;
+
+        // Find the closest character in this line (returns byte index within the line)
+        let line_byte_index = shaped_line.index_for_x(relative_x).unwrap_or(0);
+
+        // Add the line's byte offset to get the total byte offset in the content
+        let final_offset = byte_offset + line_byte_index;
+        let final_offset = final_offset.min(self.content.len());
+
+        self.cursor_position = final_offset;
+        Some(self.offset_to_utf16(final_offset))
     }
 }
 
@@ -333,6 +405,8 @@ impl Element for SearchInputElement {
         cx: &mut App,
     ) {
         let focus_handle = self.input.read(cx).focus_handle.clone();
+        let is_focused = focus_handle.is_focused(window);
+
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
@@ -354,7 +428,49 @@ impl Element for SearchInputElement {
             self.input.update(cx, |input, _cx| {
                 input.last_layout = Some(last_line.clone());
                 input.last_bounds = Some(bounds);
+                input.last_lines = prepaint.lines.clone();
             });
+        }
+
+        // Paint cursor if focused
+        if is_focused {
+            let cursor_position = self.input.read(cx).cursor_position;
+            let content = self.input.read(cx).content.to_string();
+
+            // Find which line the cursor is on and the byte offset within that line
+            let mut current_byte = 0;
+            let mut current_line = 0;
+            let mut byte_offset_in_line = 0;
+
+            for ch in content.chars() {
+                if current_byte >= cursor_position {
+                    break;
+                }
+                if ch == '\n' {
+                    current_line += 1;
+                    byte_offset_in_line = 0;
+                } else {
+                    byte_offset_in_line += ch.len_utf8();
+                }
+                current_byte += ch.len_utf8();
+            }
+
+            // Get the x position within the line
+            if current_line < prepaint.lines.len() {
+                let shaped_line = &prepaint.lines[current_line];
+                let x_pos = shaped_line.x_for_index(byte_offset_in_line);
+                let cursor_x = bounds.origin.x + x_pos;
+                let cursor_y = bounds.origin.y + (current_line as f32 * line_height);
+
+                // Draw cursor as a vertical line
+                use gpui::{fill, point, size};
+                let cursor_bounds = gpui::Bounds {
+                    origin: point(cursor_x, cursor_y),
+                    size: size(px(2.0), line_height),
+                };
+
+                window.paint_quad(fill(cursor_bounds, OneDarkTheme::text()));
+            }
         }
     }
 }
