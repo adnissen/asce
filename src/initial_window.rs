@@ -69,6 +69,8 @@ impl Render for InitialWindow {
                                                     cx,
                                                     path_string,
                                                     path_clone,
+                                                    None,
+                                                    None,
                                                 );
                                             })
                                             .ok();
