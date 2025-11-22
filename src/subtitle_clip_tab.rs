@@ -1,11 +1,11 @@
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
-use crate::search_input::SearchInput;
+use crate::input::InputState;
 use crate::subtitle_extractor::SubtitleEntry;
 use gpui::{div, prelude::*, Context, Entity, IntoElement, Render, ScrollHandle, Window};
 
 /// Clip tab for custom subtitle editing
 pub struct SubtitleClipTab {
-    custom_subtitle_input: Entity<SearchInput>,
+    custom_subtitle_input: Entity<InputState>,
     controls: Option<Entity<crate::controls_window::ControlsWindow>>,
     subtitle_entries: Vec<SubtitleEntry>, // Reference to subtitle entries
     scroll_handle: ScrollHandle,          // For scrolling the text box
@@ -16,7 +16,7 @@ impl SubtitleClipTab {
     pub fn new(cx: &mut Context<Self>) -> Self {
         // Create custom subtitle input with custom placeholder
         let custom_subtitle_input = cx.new(|cx| {
-            let mut input = SearchInput::new(cx);
+            let mut input = InputState::new(cx);
             input.set_placeholder("Enter text");
             input.set_multiline(true);
             input.set_fill_height(false); // Don't fill height - let it grow with content for scrolling

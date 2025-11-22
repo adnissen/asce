@@ -12,6 +12,8 @@ clap = { version = "4.5", features = ["derive"] }
 gl = "0.14"
 image = "0.25"
 smallvec = "1.13"
+ropey = "1.6"
+sum_tree = { git = "https://github.com/zed-industries/zed.git", rev = "917148c5ce6b4801dee7ab191b6fb5144f84d0ea" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"

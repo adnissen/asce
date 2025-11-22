@@ -7,7 +7,7 @@ use gpui::{
 use std::rc::Rc;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
-use crate::search_input::{self, SearchInput};
+use crate::input::InputState;
 use crate::select::{Select, SelectEvent, SelectItem, SelectState};
 use crate::subtitle_clip_tab::SubtitleClipTab;
 use crate::subtitle_detector::SubtitleStream;
@@ -33,7 +33,7 @@ impl SelectItem for SubtitleStream {
 pub struct SubtitleWindow {
     select_state: Entity<SelectState<SubtitleStream>>,
     sync_subtitles_to_video: Entity<CheckboxState>,
-    search_input: Entity<SearchInput>,
+    search_input: Entity<InputState>,
     subtitle_entries: Vec<SubtitleEntry>,
     current_position: f32,                 // Current video position in seconds
     current_subtitle_index: Option<usize>, // Index of the currently active subtitle (from video position)
@@ -183,7 +183,7 @@ impl SubtitleWindow {
         .detach();
 
         // Create search input
-        let search_input = cx.new(|cx| SearchInput::new(cx));
+        let search_input = cx.new(|cx| InputState::new(cx));
 
         // Create clip tab component
         let clip_tab = cx.new(|cx| SubtitleClipTab::new(cx));
@@ -593,11 +593,16 @@ impl Render for SubtitleWindow {
                     .child(
                         div()
                             .w_full()
-                            .on_action(cx.listener(|this, _: &search_input::Enter, _, cx| {
-                                this.on_search_enter(cx);
-                            }))
-                            .on_action(cx.listener(|this, _: &search_input::Escape, _, cx| {
-                                this.on_search_escape(cx);
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                                match event.keystroke.key.as_str() {
+                                    "enter" => {
+                                        this.on_search_enter(cx);
+                                    }
+                                    "escape" => {
+                                        this.on_search_escape(cx);
+                                    }
+                                    _ => {}
+                                }
                             }))
                             .child(self.search_input.clone()),
                     ),

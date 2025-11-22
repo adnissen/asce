@@ -14,8 +14,8 @@ mod custom_titlebar;
 mod ffmpeg_export;
 mod font_utils;
 mod initial_window;
+mod input;
 mod platform;
-mod search_input;
 mod select;
 mod slider;
 mod subtitle_clip_tab;
@@ -256,19 +256,28 @@ fn main() {
         cx.on_action(quit);
         cx.on_action(open_file);
 
-        // Bind keys for search input
-        cx.bind_keys([
-            gpui::KeyBinding::new("enter", search_input::Enter, Some("SearchInput")),
-            gpui::KeyBinding::new("escape", search_input::Escape, Some("SearchInput")),
-            gpui::KeyBinding::new("backspace", search_input::Backspace, Some("SearchInput")),
-        ]);
-
         // Bind keys for time input
         cx.bind_keys([gpui::KeyBinding::new(
             "backspace",
             time_input::Backspace,
             Some("TimeInput"),
         )]);
+
+        // Bind keys for input component
+        cx.bind_keys([
+            gpui::KeyBinding::new("backspace", input::state::Backspace, Some("InputState")),
+            gpui::KeyBinding::new("delete", input::state::Delete, Some("InputState")),
+            gpui::KeyBinding::new("enter", input::state::Enter, Some("InputState")),
+            gpui::KeyBinding::new("escape", input::state::Escape, Some("InputState")),
+            gpui::KeyBinding::new("left", input::state::Left, Some("InputState")),
+            gpui::KeyBinding::new("right", input::state::Right, Some("InputState")),
+            gpui::KeyBinding::new("up", input::state::Up, Some("InputState")),
+            gpui::KeyBinding::new("down", input::state::Down, Some("InputState")),
+            gpui::KeyBinding::new("cmd-a", input::state::SelectAll, Some("InputState")),
+            gpui::KeyBinding::new("cmd-c", input::state::Copy, Some("InputState")),
+            gpui::KeyBinding::new("cmd-x", input::state::Cut, Some("InputState")),
+            gpui::KeyBinding::new("cmd-v", input::state::Paste, Some("InputState")),
+        ]);
 
         // Add menu items
         set_app_menus(cx);
