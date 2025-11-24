@@ -33,7 +33,6 @@ use gpui::{
     actions, px, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Global, Menu,
     MenuItem, PathPromptOptions, SystemMenuType, WindowOptions,
 };
-use initial_window::InitialWindow;
 use unified_window::UnifiedWindow;
 use video_player::ClockTime;
 

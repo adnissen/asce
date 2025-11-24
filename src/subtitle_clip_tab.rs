@@ -26,12 +26,62 @@ impl SubtitleClipTab {
         // Create checkbox for custom mode (default off)
         let custom_checkbox = cx.new(|_cx| CheckboxState::new(false));
 
-        // Subscribe to checkbox changes to update global state
-        cx.subscribe(&custom_checkbox, |_this, _, event: &CheckboxEvent, cx| {
+        // Subscribe to checkbox changes to update global state and load/unload custom subtitles
+        cx.subscribe(&custom_checkbox, |this, _, event: &CheckboxEvent, cx| {
             if let CheckboxEvent::Change(checked) = event {
                 cx.update_global::<crate::AppState, _>(|state, _| {
                     state.custom_subtitle_mode = *checked;
                 });
+
+                // Load or unload custom subtitles
+                if *checked {
+                    // Custom mode enabled - load custom subtitles
+                    let srt_content = this.get_custom_subtitle_srt(cx);
+
+                    if !srt_content.trim().is_empty() {
+                        let video_player = cx.global::<crate::AppState>().video_player.clone();
+                        let lock_result = video_player.lock();
+
+                        match lock_result {
+                            Ok(player) => match player.add_subtitle_from_text(&srt_content) {
+                                Ok(track_id) => {
+                                    println!("Custom subtitle loaded as track {}", track_id);
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to load custom subtitle: {}", e);
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Failed to lock video player: {}", e);
+                            }
+                        }
+                    } else {
+                        println!("No custom subtitle text to load");
+                    }
+                } else {
+                    // Custom mode disabled - remove custom subtitles
+                    let video_player = cx.global::<crate::AppState>().video_player.clone();
+                    let selected_track = cx.global::<crate::AppState>().selected_subtitle_track;
+                    let lock_result = video_player.lock();
+
+                    match lock_result {
+                        Ok(player) => {
+                            if let Err(e) = player.remove_custom_subtitles() {
+                                eprintln!("Failed to remove custom subtitles: {}", e);
+                            }
+
+                            // Re-enable the original subtitle track if one was selected
+                            if let Some(track_index) = selected_track {
+                                if let Err(e) = player.set_subtitle_track(track_index as i32) {
+                                    eprintln!("Failed to restore original subtitle track: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to lock video player: {}", e);
+                        }
+                    }
+                }
             }
         })
         .detach();
@@ -53,6 +103,44 @@ impl SubtitleClipTab {
     /// Get the custom subtitle text
     pub fn get_custom_subtitle_text(&self, cx: &Context<Self>) -> String {
         self.custom_subtitle_input.read(cx).content()
+    }
+
+    /// Convert the custom subtitle text to proper SRT format with sequence numbers
+    pub fn get_custom_subtitle_srt(&self, cx: &Context<Self>) -> String {
+        let content = self.custom_subtitle_input.read(cx).content();
+
+        // Parse the content and add sequence numbers
+        let mut srt_output = String::new();
+        let mut sequence = 1;
+
+        // Split by double newlines to get subtitle blocks
+        let blocks: Vec<&str> = content.split("\n\n").collect();
+
+        for block in blocks {
+            let block = block.trim();
+            if block.is_empty() {
+                continue;
+            }
+
+            // Each block should have: timestamp line, then text
+            let lines: Vec<&str> = block.lines().collect();
+            if lines.is_empty() {
+                continue;
+            }
+
+            // Check if the first line contains " --> " (timestamp)
+            if lines[0].contains(" --> ") {
+                // Add sequence number
+                srt_output.push_str(&format!("{}\n", sequence));
+                sequence += 1;
+
+                // Add the rest of the block
+                srt_output.push_str(block);
+                srt_output.push_str("\n\n");
+            }
+        }
+
+        srt_output
     }
 
     /// Update subtitle entries (called by SubtitleWindow when subtitles change)

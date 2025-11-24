@@ -1223,6 +1223,123 @@ impl VideoPlayer {
         self.set_property_int("sid", track_index as i64)
     }
 
+    /// Add custom subtitle from text (SRT format)
+    /// Returns the track ID of the added subtitle
+    pub fn add_subtitle_from_text(&self, srt_content: &str) -> Result<i32, VideoPlayerError> {
+        use std::io::Write;
+
+        // Create a temporary file for the subtitle
+        let temp_dir = std::env::temp_dir();
+        let temp_file_path = temp_dir.join(format!(
+            "asve_custom_subtitle_{}.srt",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ));
+
+        // Write the SRT content to the temp file
+        let mut file = std::fs::File::create(&temp_file_path).map_err(|e| {
+            VideoPlayerError::CommandError(format!("Failed to create temp file: {}", e))
+        })?;
+
+        file.write_all(srt_content.as_bytes()).map_err(|e| {
+            VideoPlayerError::CommandError(format!("Failed to write subtitle file: {}", e))
+        })?;
+
+        println!(
+            "VideoPlayer: Created temp subtitle file: {:?}",
+            temp_file_path
+        );
+
+        // Add the subtitle file to mpv using sub-add command
+        unsafe {
+            let cmd = CString::new("sub-add").unwrap();
+            let path = CString::new(temp_file_path.to_string_lossy().as_ref()).unwrap();
+            let selected = CString::new("select").unwrap();
+            let mut args = [cmd.as_ptr(), path.as_ptr(), selected.as_ptr(), ptr::null()];
+
+            let ret = mpv_command(self.mpv_handle.0, args.as_mut_ptr());
+            if ret < 0 {
+                return Err(VideoPlayerError::CommandError(Self::error_string(ret)));
+            }
+        }
+
+        // Get the track ID of the newly added subtitle
+        // mpv adds it as the last track, so we query the track-list
+        let track_count = self.get_property_int("track-list/count").unwrap_or(0);
+
+        println!(
+            "VideoPlayer: Custom subtitle added successfully (total track count: {})",
+            track_count
+        );
+
+        // The newly added subtitle track ID (mpv uses 1-based indexing for track IDs)
+        Ok(track_count as i32)
+    }
+
+    /// Remove all secondary subtitles (keeps only the original embedded subtitles)
+    pub fn remove_custom_subtitles(&self) -> Result<(), VideoPlayerError> {
+        println!("VideoPlayer: Removing custom subtitles");
+
+        unsafe {
+            let cmd = CString::new("sub-remove").unwrap();
+            let mut args = [cmd.as_ptr(), ptr::null()];
+
+            let ret = mpv_command(self.mpv_handle.0, args.as_mut_ptr());
+            if ret < 0 {
+                // It's okay if there's no subtitle to remove
+                println!(
+                    "VideoPlayer: No custom subtitle to remove (or error: {})",
+                    Self::error_string(ret)
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get an integer property value
+    fn get_property_int(&self, name: &str) -> Result<i64, VideoPlayerError> {
+        unsafe {
+            let name_c = CString::new(name).unwrap();
+            let mut value: i64 = 0;
+            let ret = mpv_get_property(
+                self.mpv_handle.0,
+                name_c.as_ptr(),
+                mpv_format_MPV_FORMAT_INT64,
+                &mut value as *mut i64 as *mut c_void,
+            );
+            if ret < 0 {
+                return Err(VideoPlayerError::MpvError(Self::error_string(ret)));
+            }
+            Ok(value)
+        }
+    }
+
+    /// Get a string property value
+    fn get_property_string(&self, name: &str) -> Result<String, VideoPlayerError> {
+        unsafe {
+            let name_c = CString::new(name).unwrap();
+            let mut value: *mut i8 = ptr::null_mut();
+            let ret = mpv_get_property(
+                self.mpv_handle.0,
+                name_c.as_ptr(),
+                mpv_format_MPV_FORMAT_STRING,
+                &mut value as *mut *mut i8 as *mut c_void,
+            );
+            if ret < 0 {
+                return Err(VideoPlayerError::MpvError(Self::error_string(ret)));
+            }
+            if value.is_null() {
+                return Ok(String::new());
+            }
+            let result = CStr::from_ptr(value).to_string_lossy().into_owned();
+            mpv_free(value as *mut c_void);
+            Ok(result)
+        }
+    }
+
     /// Set subtitle font family
     pub fn set_subtitle_font(&self, font_name: &str) -> Result<(), VideoPlayerError> {
         println!("VideoPlayer: Setting subtitle font to {}", font_name);
