@@ -26,6 +26,40 @@ impl SubtitleClipTab {
         // Create checkbox for custom mode (default off)
         let custom_checkbox = cx.new(|_cx| CheckboxState::new(false));
 
+        // Subscribe to custom subtitle input changes to reload subtitles when in custom mode
+        cx.observe(&custom_subtitle_input, |this, _input, cx| {
+            // Only reload if custom mode is enabled
+            let custom_mode = cx.global::<crate::AppState>().custom_subtitle_mode;
+            if custom_mode {
+                let srt_content = this.get_custom_subtitle_srt(cx);
+
+                if !srt_content.trim().is_empty() {
+                    let video_player = cx.global::<crate::AppState>().video_player.clone();
+                    let lock_result = video_player.lock();
+
+                    match lock_result {
+                        Ok(player) => match player.remove_custom_subtitles() {
+                            Ok(_) => match player.add_subtitle_from_text(&srt_content) {
+                                Ok(track_id) => {
+                                    println!("Custom subtitle reloaded as track {}", track_id);
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to reload custom subtitle: {}", e);
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Failed to remove custom subtitles: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("Failed to lock video player: {}", e);
+                        }
+                    }
+                }
+            }
+        })
+        .detach();
+
         // Subscribe to checkbox changes to update global state and load/unload custom subtitles
         cx.subscribe(&custom_checkbox, |this, _, event: &CheckboxEvent, cx| {
             if let CheckboxEvent::Change(checked) = event {
