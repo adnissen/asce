@@ -10,6 +10,7 @@ pub struct SubtitleClipTab {
     subtitle_entries: Vec<SubtitleEntry>, // Reference to subtitle entries
     scroll_handle: ScrollHandle,          // For scrolling the text box
     custom_checkbox: Entity<CheckboxState>, // Checkbox for custom subtitle mode
+    last_loaded_content: String,          // Track last loaded content to avoid redundant reloads
 }
 
 impl SubtitleClipTab {
@@ -30,9 +31,10 @@ impl SubtitleClipTab {
         cx.observe(&custom_subtitle_input, |this, _input, cx| {
             // Only reload if custom mode is enabled
             let custom_mode = cx.global::<crate::AppState>().custom_subtitle_mode;
-            if custom_mode {
-                let srt_content = this.get_custom_subtitle_srt(cx);
+            let display_subtitles = cx.global::<crate::AppState>().display_subtitles;
+            let srt_content = this.get_custom_subtitle_srt(cx);
 
+            if custom_mode && display_subtitles && srt_content != this.last_loaded_content {
                 if !srt_content.trim().is_empty() {
                     let video_player = cx.global::<crate::AppState>().video_player.clone();
                     let lock_result = video_player.lock();
@@ -42,6 +44,8 @@ impl SubtitleClipTab {
                             Ok(_) => match player.add_subtitle_from_text(&srt_content) {
                                 Ok(track_id) => {
                                     println!("Custom subtitle reloaded as track {}", track_id);
+                                    // Update the last loaded content after successful reload
+                                    this.last_loaded_content = srt_content.clone();
                                 }
                                 Err(e) => {
                                     eprintln!("Failed to reload custom subtitle: {}", e);
@@ -80,6 +84,8 @@ impl SubtitleClipTab {
                             Ok(player) => match player.add_subtitle_from_text(&srt_content) {
                                 Ok(track_id) => {
                                     println!("Custom subtitle loaded as track {}", track_id);
+                                    // Update the last loaded content after successful load
+                                    this.last_loaded_content = srt_content.clone();
                                 }
                                 Err(e) => {
                                     eprintln!("Failed to load custom subtitle: {}", e);
@@ -115,6 +121,9 @@ impl SubtitleClipTab {
                             eprintln!("Failed to lock video player: {}", e);
                         }
                     }
+
+                    // Clear last loaded content when disabling custom mode
+                    this.last_loaded_content.clear();
                 }
             }
         })
@@ -126,6 +135,7 @@ impl SubtitleClipTab {
             subtitle_entries: Vec::new(),
             scroll_handle: ScrollHandle::new(),
             custom_checkbox,
+            last_loaded_content: String::new(),
         }
     }
 
