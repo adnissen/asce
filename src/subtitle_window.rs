@@ -7,12 +7,20 @@ use gpui::{
 use std::rc::Rc;
 
 use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
-use crate::search_input::{self, SearchInput};
+use crate::input::InputState;
 use crate::select::{Select, SelectEvent, SelectItem, SelectState};
+use crate::subtitle_clip_tab::SubtitleClipTab;
 use crate::subtitle_detector::SubtitleStream;
 use crate::subtitle_extractor::SubtitleEntry;
 use crate::video_player::ClockTime;
 use crate::AppState;
+
+/// Active tab in the subtitle window
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum SubtitleTab {
+    Video, // Default view with sync, dropdown, search
+    Clip,  // Custom subtitle editor for clips
+}
 
 // Implement SelectItem for SubtitleStream
 impl SelectItem for SubtitleStream {
@@ -25,7 +33,7 @@ impl SelectItem for SubtitleStream {
 pub struct SubtitleWindow {
     select_state: Entity<SelectState<SubtitleStream>>,
     sync_subtitles_to_video: Entity<CheckboxState>,
-    search_input: Entity<SearchInput>,
+    search_input: Entity<InputState>,
     subtitle_entries: Vec<SubtitleEntry>,
     current_position: f32,                 // Current video position in seconds
     current_subtitle_index: Option<usize>, // Index of the currently active subtitle (from video position)
@@ -36,6 +44,9 @@ pub struct SubtitleWindow {
     last_scrolled_to_video: Option<usize>,  // Last video position we scrolled to
     last_submitted_search_term: Option<String>, // Last search term submitted via Enter (to distinguish NEW vs SAME searches)
     pub context_menu: Option<ContextMenuState>, // Right-click context menu state (public so unified window can close it)
+    active_tab: SubtitleTab,               // Currently active tab
+    clip_tab: Entity<SubtitleClipTab>,     // Clip tab component
+    controls: Option<Entity<crate::controls_window::ControlsWindow>>, // Reference to controls window to check clip state
 }
 
 /// Type of context menu to display
@@ -105,7 +116,12 @@ impl SubtitleWindow {
         });
 
         // Set the subtitle entries
-        self.subtitle_entries = data.first_stream_entries;
+        self.subtitle_entries = data.first_stream_entries.clone();
+
+        // Update clip tab with new subtitle entries
+        self.clip_tab.update(cx, |clip_tab, _cx| {
+            clip_tab.set_subtitle_entries(data.first_stream_entries);
+        });
 
         cx.notify();
     }
@@ -167,7 +183,10 @@ impl SubtitleWindow {
         .detach();
 
         // Create search input
-        let search_input = cx.new(|cx| SearchInput::new(cx));
+        let search_input = cx.new(|cx| InputState::new(cx));
+
+        // Create clip tab component
+        let clip_tab = cx.new(|cx| SubtitleClipTab::new(cx));
 
         Self {
             select_state,
@@ -183,7 +202,20 @@ impl SubtitleWindow {
             last_scrolled_to_video: None,
             last_submitted_search_term: None,
             context_menu: None,
+            active_tab: SubtitleTab::Video, // Default to Video tab
+            clip_tab,
+            controls: None, // Will be set by UnifiedWindow after creation
         }
+    }
+
+    /// Set the controls window reference (called by UnifiedWindow)
+    pub fn set_controls(&mut self, controls: Entity<crate::controls_window::ControlsWindow>, cx: &mut Context<Self>) {
+        self.controls = Some(controls.clone());
+
+        // Also set controls on the clip tab
+        self.clip_tab.update(cx, |clip_tab, _cx| {
+            clip_tab.set_controls(controls);
+        });
     }
 
     /// Load subtitle streams for the current video file
@@ -345,6 +377,26 @@ impl SubtitleWindow {
         cx.notify();
     }
 
+    /// Check if the Clip tab should be enabled (when there's a valid clip)
+    fn is_clip_tab_enabled(&self, cx: &Context<Self>) -> bool {
+        if let Some(controls_entity) = &self.controls {
+            let controls = controls_entity.read(cx);
+
+            // Inline the clip validation logic
+            let start_ms = controls.clip_start_input
+                .read(cx)
+                .parse_time_ms()
+                .or(controls.clip_start);
+            let end_ms = controls.clip_end_input
+                .read(cx)
+                .parse_time_ms()
+                .or(controls.clip_end);
+
+            return start_ms.is_some() && end_ms.is_some() && start_ms.unwrap() < end_ms.unwrap();
+        }
+        false
+    }
+
     /// Load a specific subtitle stream by index
     fn load_subtitle_stream(&mut self, stream_index: usize, cx: &mut Context<Self>) {
         let app_state = cx.global::<AppState>();
@@ -364,6 +416,12 @@ impl SubtitleWindow {
                 // Parse SRT content
                 self.subtitle_entries = crate::subtitle_extractor::parse_srt(&srt_content);
                 println!("Loaded {} subtitle entries", self.subtitle_entries.len());
+
+                // Update clip tab with new subtitle entries
+                let entries_clone = self.subtitle_entries.clone();
+                self.clip_tab.update(cx, |clip_tab, _cx| {
+                    clip_tab.set_subtitle_entries(entries_clone);
+                });
 
                 cx.notify();
             }
@@ -417,6 +475,10 @@ impl Render for SubtitleWindow {
         // Get the view entity before entering the div builder
         let view = cx.entity().clone();
 
+        // Check if Clip tab should be enabled
+        let clip_tab_enabled = self.is_clip_tab_enabled(cx);
+        let active_tab = self.active_tab;
+
         div()
             .flex()
             .flex_col()
@@ -425,9 +487,84 @@ impl Render for SubtitleWindow {
             .p_4()
             .gap_4()
             .relative() // Add relative positioning for absolute children
+            // Tab bar
             .child(
-                // Controls section
                 div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .border_b_1()
+                    .border_color(OneDarkTheme::border_variant())
+                    .pb_2()
+                    .child(
+                        // Video tab
+                        div()
+                            .px_4()
+                            .py_2()
+                            .rounded_t_md()
+                            .cursor_pointer()
+                            .text_sm()
+                            .when(active_tab == SubtitleTab::Video, |div| {
+                                div.bg(OneDarkTheme::element_active())
+                                    .text_color(OneDarkTheme::text())
+                                    .border_b_2()
+                                    .border_color(OneDarkTheme::warning())
+                            })
+                            .when(active_tab != SubtitleTab::Video, |div| {
+                                div.bg(OneDarkTheme::element_background())
+                                    .text_color(OneDarkTheme::text_muted())
+                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.active_tab = SubtitleTab::Video;
+                                    cx.notify();
+                                }),
+                            )
+                            .child("Video"),
+                    )
+                    .child(
+                        // Clip tab
+                        div()
+                            .px_4()
+                            .py_2()
+                            .rounded_t_md()
+                            .text_sm()
+                            .when(clip_tab_enabled, |div| div.cursor_pointer())
+                            .when(!clip_tab_enabled, |div| div.cursor_not_allowed())
+                            .when(active_tab == SubtitleTab::Clip, |div| {
+                                div.bg(OneDarkTheme::element_active())
+                                    .text_color(OneDarkTheme::text())
+                                    .border_b_2()
+                                    .border_color(OneDarkTheme::warning())
+                            })
+                            .when(active_tab != SubtitleTab::Clip && clip_tab_enabled, |div| {
+                                div.bg(OneDarkTheme::element_background())
+                                    .text_color(OneDarkTheme::text_muted())
+                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                            })
+                            .when(!clip_tab_enabled, |div| {
+                                div.bg(OneDarkTheme::element_background())
+                                    .text_color(OneDarkTheme::text_disabled())
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    if clip_tab_enabled {
+                                        this.active_tab = SubtitleTab::Clip;
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                            .child("Clip"),
+                    ),
+            )
+            // Video tab content
+            .when(active_tab == SubtitleTab::Video, |parent| {
+                parent.child(
+                    // Controls section
+                    div()
                     .w_full()
                     .flex()
                     .flex_col()
@@ -456,11 +593,16 @@ impl Render for SubtitleWindow {
                     .child(
                         div()
                             .w_full()
-                            .on_action(cx.listener(|this, _: &search_input::Enter, _, cx| {
-                                this.on_search_enter(cx);
-                            }))
-                            .on_action(cx.listener(|this, _: &search_input::Escape, _, cx| {
-                                this.on_search_escape(cx);
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                                match event.keystroke.key.as_str() {
+                                    "enter" => {
+                                        this.on_search_enter(cx);
+                                    }
+                                    "escape" => {
+                                        this.on_search_escape(cx);
+                                    }
+                                    _ => {}
+                                }
                             }))
                             .child(self.search_input.clone()),
                     ),
@@ -716,8 +858,13 @@ impl Render for SubtitleWindow {
                     .track_scroll(&self.scroll_handle)
                     .w_full()
                     .h_full(),
-                ),
+                )
             )
+            })
+            // Clip tab content
+            .when(active_tab == SubtitleTab::Clip, |parent| {
+                parent.child(self.clip_tab.clone())
+            })
             // Render context menu if active
             .children(self.context_menu.as_ref().map(|menu_state| {
                 let subtitle_index = menu_state.subtitle_index;

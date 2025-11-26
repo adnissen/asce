@@ -1,6 +1,8 @@
 use crate::theme::OneDarkTheme;
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, prelude::FluentBuilder, px, svg, Context, IntoElement, InteractiveElement, MouseButton,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+};
 
 #[cfg(target_os = "windows")]
 use raw_window_handle::HasWindowHandle;
@@ -27,7 +29,7 @@ impl CustomTitlebar {
     }
 
     #[cfg(target_os = "windows")]
-    fn start_window_drag(window: &mut gpui::Window) {
+    fn start_window_drag(window: &mut Window) {
         // Get the raw window handle (HWND)
         if let Ok(handle) = window.window_handle() {
             if let raw_window_handle::RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
@@ -48,7 +50,7 @@ impl CustomTitlebar {
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn start_window_drag(_window: &mut gpui::Window) {
+    fn start_window_drag(_window: &mut Window) {
         // No-op on non-Windows platforms
     }
 }
@@ -56,8 +58,8 @@ impl CustomTitlebar {
 impl Render for CustomTitlebar {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
             .id("titlebar")
@@ -88,7 +90,7 @@ impl Render for CustomTitlebar {
                     // Enable window dragging on Windows when clicking title area
                     .when(cfg!(target_os = "windows"), |this| {
                         this.on_mouse_down(
-                            gpui::MouseButton::Left,
+                            MouseButton::Left,
                             cx.listener(|_, _, window, _| {
                                 Self::start_window_drag(window);
                             }),

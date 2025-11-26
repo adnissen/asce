@@ -14,10 +14,11 @@ mod custom_titlebar;
 mod ffmpeg_export;
 mod font_utils;
 mod initial_window;
+mod input;
 mod platform;
-mod search_input;
 mod select;
 mod slider;
+mod subtitle_clip_tab;
 mod subtitle_detector;
 mod subtitle_extractor;
 mod subtitle_window;
@@ -32,8 +33,8 @@ use gpui::{
     actions, px, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Global, Menu,
     MenuItem, PathPromptOptions, SystemMenuType, WindowOptions,
 };
-use initial_window::InitialWindow;
 use unified_window::UnifiedWindow;
+use video_player::ClockTime;
 
 use std::sync::{Arc, Mutex};
 
@@ -43,6 +44,143 @@ use std::sync::{Arc, Mutex};
 struct Cli {
     /// Path to video file to open
     video_path: Option<String>,
+
+    /// Clip start time (supports: 90.5, 01:30.500, 00:01:30.500, or 90500)
+    #[arg(long)]
+    clip_start: Option<String>,
+
+    /// Clip end time (supports: 120.75, 02:00.750, 00:02:00.750, or 120750)
+    #[arg(long)]
+    clip_end: Option<String>,
+}
+
+/// Parse a timestamp string into milliseconds
+///
+/// Supports multiple formats:
+/// - Seconds (decimal): "90.5" → 90,500 ms
+/// - MM:SS.mmm: "01:30.500" → 90,500 ms
+/// - HH:MM:SS.mmm: "00:01:30.500" → 90,500 ms
+/// - Milliseconds (integer): "90500" → 90,500 ms
+fn parse_timestamp(input: &str) -> Result<f32, String> {
+    let input = input.trim();
+
+    // Count colons to determine format
+    let colon_count = input.matches(':').count();
+
+    match colon_count {
+        0 => {
+            // Either seconds (decimal) or milliseconds (integer)
+            if let Ok(value) = input.parse::<f32>() {
+                if value < 0.0 {
+                    return Err(format!("Timestamp cannot be negative: {}", input));
+                }
+                // If it contains a decimal point, treat as seconds
+                // Otherwise, treat as milliseconds if > 1000, seconds if <= 1000
+                if input.contains('.') {
+                    // Decimal seconds
+                    Ok(value * 1000.0)
+                } else if value > 1000.0 {
+                    // Likely milliseconds
+                    Ok(value)
+                } else {
+                    // Small integer, treat as seconds
+                    Ok(value * 1000.0)
+                }
+            } else {
+                Err(format!("Invalid number format: {}", input))
+            }
+        }
+        1 => {
+            // MM:SS.mmm format
+            let parts: Vec<&str> = input.split(':').collect();
+            if parts.len() != 2 {
+                return Err(format!("Invalid MM:SS.mmm format: {}", input));
+            }
+
+            let minutes = parts[0]
+                .parse::<u32>()
+                .map_err(|_| format!("Invalid minutes: {}", parts[0]))?;
+
+            // Parse seconds and milliseconds
+            let (seconds, milliseconds) = if parts[1].contains('.') {
+                let sec_parts: Vec<&str> = parts[1].split('.').collect();
+                if sec_parts.len() != 2 {
+                    return Err(format!("Invalid seconds format: {}", parts[1]));
+                }
+                let secs = sec_parts[0]
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid seconds: {}", sec_parts[0]))?;
+                let ms_str = format!("{:0<3}", sec_parts[1]); // Pad to 3 digits
+                let ms = ms_str[..3]
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid milliseconds: {}", sec_parts[1]))?;
+                (secs, ms)
+            } else {
+                let secs = parts[1]
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid seconds: {}", parts[1]))?;
+                (secs, 0)
+            };
+
+            if seconds >= 60 {
+                return Err(format!("Seconds must be less than 60: {}", seconds));
+            }
+
+            let total_ms = (minutes * 60 * 1000) + (seconds * 1000) + milliseconds;
+            Ok(total_ms as f32)
+        }
+        2 => {
+            // HH:MM:SS.mmm format
+            let parts: Vec<&str> = input.split(':').collect();
+            if parts.len() != 3 {
+                return Err(format!("Invalid HH:MM:SS.mmm format: {}", input));
+            }
+
+            let hours = parts[0]
+                .parse::<u32>()
+                .map_err(|_| format!("Invalid hours: {}", parts[0]))?;
+            let minutes = parts[1]
+                .parse::<u32>()
+                .map_err(|_| format!("Invalid minutes: {}", parts[1]))?;
+
+            if minutes >= 60 {
+                return Err(format!("Minutes must be less than 60: {}", minutes));
+            }
+
+            // Parse seconds and milliseconds
+            let (seconds, milliseconds) = if parts[2].contains('.') {
+                let sec_parts: Vec<&str> = parts[2].split('.').collect();
+                if sec_parts.len() != 2 {
+                    return Err(format!("Invalid seconds format: {}", parts[2]));
+                }
+                let secs = sec_parts[0]
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid seconds: {}", sec_parts[0]))?;
+                let ms_str = format!("{:0<3}", sec_parts[1]); // Pad to 3 digits
+                let ms = ms_str[..3]
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid milliseconds: {}", sec_parts[1]))?;
+                (secs, ms)
+            } else {
+                let secs = parts[2]
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid seconds: {}", parts[2]))?;
+                (secs, 0)
+            };
+
+            if seconds >= 60 {
+                return Err(format!("Seconds must be less than 60: {}", seconds));
+            }
+
+            let total_ms =
+                (hours * 60 * 60 * 1000) + (minutes * 60 * 1000) + (seconds * 1000) + milliseconds;
+            Ok(total_ms as f32)
+        }
+        _ => Err(format!(
+            "Invalid timestamp format (too many colons): {}",
+            input
+        )),
+    }
 }
 
 fn main() {
@@ -54,7 +192,61 @@ fn main() {
         std::process::exit(1);
     }
 
-    Application::new().run(|cx: &mut App| {
+    // Parse and validate clip times if provided
+    let parsed_clip_start: Option<f32>;
+    let parsed_clip_end: Option<f32>;
+
+    // Validate that clip options are only used with a video file
+    if (cli.clip_start.is_some() || cli.clip_end.is_some()) && cli.video_path.is_none() {
+        eprintln!(
+            "Error: --clip-start and --clip-end can only be used when providing a video file"
+        );
+        std::process::exit(1);
+    }
+
+    // Parse clip times
+    if let Some(ref start_str) = cli.clip_start {
+        match parse_timestamp(start_str) {
+            Ok(ms) => parsed_clip_start = Some(ms),
+            Err(e) => {
+                eprintln!("Error parsing --clip-start: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        parsed_clip_start = None;
+    }
+
+    if let Some(ref end_str) = cli.clip_end {
+        match parse_timestamp(end_str) {
+            Ok(ms) => parsed_clip_end = Some(ms),
+            Err(e) => {
+                eprintln!("Error parsing --clip-end: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        parsed_clip_end = None;
+    }
+
+    // Validate that both clip start and end are provided together
+    if parsed_clip_start.is_some() != parsed_clip_end.is_some() {
+        eprintln!("Error: Both --clip-start and --clip-end must be provided together");
+        std::process::exit(1);
+    }
+
+    // Validate that clip_start < clip_end
+    if let (Some(start), Some(end)) = (parsed_clip_start, parsed_clip_end) {
+        if start >= end {
+            eprintln!(
+                "Error: --clip-start must be less than --clip-end ({} >= {})",
+                start, end
+            );
+            std::process::exit(1);
+        }
+    }
+
+    Application::new().run(move |cx: &mut App| {
         cx.set_global(AppState::new());
 
         // Bring the menu bar to the foreground (so you can see the menu bar)
@@ -63,19 +255,28 @@ fn main() {
         cx.on_action(quit);
         cx.on_action(open_file);
 
-        // Bind keys for search input
-        cx.bind_keys([
-            gpui::KeyBinding::new("enter", search_input::Enter, Some("SearchInput")),
-            gpui::KeyBinding::new("escape", search_input::Escape, Some("SearchInput")),
-            gpui::KeyBinding::new("backspace", search_input::Backspace, Some("SearchInput")),
-        ]);
-
         // Bind keys for time input
         cx.bind_keys([gpui::KeyBinding::new(
             "backspace",
             time_input::Backspace,
             Some("TimeInput"),
         )]);
+
+        // Bind keys for input component
+        cx.bind_keys([
+            gpui::KeyBinding::new("backspace", input::state::Backspace, Some("InputState")),
+            gpui::KeyBinding::new("delete", input::state::Delete, Some("InputState")),
+            gpui::KeyBinding::new("enter", input::state::Enter, Some("InputState")),
+            gpui::KeyBinding::new("escape", input::state::Escape, Some("InputState")),
+            gpui::KeyBinding::new("left", input::state::Left, Some("InputState")),
+            gpui::KeyBinding::new("right", input::state::Right, Some("InputState")),
+            gpui::KeyBinding::new("up", input::state::Up, Some("InputState")),
+            gpui::KeyBinding::new("down", input::state::Down, Some("InputState")),
+            gpui::KeyBinding::new("cmd-a", input::state::SelectAll, Some("InputState")),
+            gpui::KeyBinding::new("cmd-c", input::state::Copy, Some("InputState")),
+            gpui::KeyBinding::new("cmd-x", input::state::Cut, Some("InputState")),
+            gpui::KeyBinding::new("cmd-v", input::state::Paste, Some("InputState")),
+        ]);
 
         // Add menu items
         set_app_menus(cx);
@@ -98,7 +299,13 @@ fn main() {
                     // Open the video directly
                     println!("Opening video file: {}", video_path);
                     let path_clone = video_path.clone();
-                    create_video_windows(cx, video_path, path_clone);
+                    create_video_windows(
+                        cx,
+                        video_path,
+                        path_clone,
+                        parsed_clip_start,
+                        parsed_clip_end,
+                    );
                 } else {
                     eprintln!(
                         "Error: Invalid file type. Supported formats: {}",
@@ -211,7 +418,8 @@ pub struct AppState {
     pub display_subtitles: bool,
     pub subtitle_settings: SubtitleSettings,
     pub source_video_width: u32, // Horizontal resolution of the source video for subtitle scaling
-    pub has_video_loaded: bool, // Whether a video has been loaded
+    pub has_video_loaded: bool,  // Whether a video has been loaded
+    pub custom_subtitle_mode: bool, // Whether custom subtitle mode is enabled in clip tab
 }
 
 impl AppState {
@@ -228,6 +436,7 @@ impl AppState {
             subtitle_settings: SubtitleSettings::default(),
             source_video_width: 1920, // Default to 1920 (will be updated when video loads)
             has_video_loaded: false,  // No video loaded initially
+            custom_subtitle_mode: false, // Default to off
         }
     }
 
@@ -262,7 +471,13 @@ fn quit(_: &Quit, cx: &mut App) {
 }
 
 /// Create the unified video player window and load the video file
-pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: String) {
+pub fn create_video_windows(
+    cx: &mut App,
+    path_string: String,
+    path_clone: String,
+    clip_start: Option<f32>,
+    clip_end: Option<f32>,
+) {
     // Get handles to existing windows before creating new ones
     println!("Preparing to create new video windows");
 
@@ -329,8 +544,8 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
     }
 
     // Get video resolution before updating AppState
-    let (video_width, _video_height) = crate::ffmpeg_export::get_video_resolution(&path_string)
-        .unwrap_or((1920, 1080));
+    let (video_width, _video_height) =
+        crate::ffmpeg_export::get_video_resolution(&path_string).unwrap_or((1920, 1080));
 
     // Update AppState with new window, file path, and source video resolution
     cx.update_global::<AppState, _>(|state, _| {
@@ -351,6 +566,20 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
             });
         })
         .ok();
+
+    // Set initial clip times if provided via CLI
+    if let (Some(start_ms), Some(end_ms)) = (clip_start, clip_end) {
+        unified_window
+            .update(cx, |unified_window, _, cx| {
+                let controls_entity = unified_window.controls.clone();
+                controls_entity.update(cx, |controls, cx| {
+                    // Convert f32 milliseconds to u64 for set_clip_times
+                    controls.set_clip_times(start_ms as u64, end_ms as u64, cx);
+                    println!("Set initial clip times: {} ms to {} ms", start_ms, end_ms);
+                });
+            })
+            .ok();
+    }
 
     // Extract and set the display handle for the video window
     if let Some(child_view_ptr) = extract_and_set_display_handle(cx) {
@@ -398,6 +627,29 @@ pub fn create_video_windows(cx: &mut App, path_string: String, path_clone: Strin
             }
         }
     };
+
+    // Seek to clip start if provided via CLI (with delay to allow mpv to be ready)
+    // there must be some better way to do this, but this does consistently work
+    if let Some(start_ms) = clip_start {
+        let video_player = cx.global::<AppState>().video_player.clone();
+        cx.spawn(async move |_cx| {
+            // Wait a bit for mpv to be fully ready
+            use std::time::Duration;
+            std::thread::sleep(Duration::from_millis(100));
+
+            if let Ok(player) = video_player.lock() {
+                // Convert milliseconds to nanoseconds
+                let nanos = (start_ms * 1_000_000.0) as u64;
+                let clock_time = ClockTime::from_nseconds(nanos);
+                if let Err(e) = player.seek(clock_time) {
+                    eprintln!("Failed to seek to clip start: {}", e);
+                } else {
+                    println!("Seeked to clip start: {} ms", start_ms);
+                }
+            }
+        })
+        .detach();
+    }
 
     // Load subtitle streams in the unified window on a background thread
     let unified_window_handle = cx.global::<AppState>().unified_window;
@@ -464,7 +716,7 @@ fn open_file(_: &OpenFile, cx: &mut App) {
                         let path_clone = path_string.clone();
 
                         cx.update(|cx| {
-                            create_video_windows(cx, path_string, path_clone);
+                            create_video_windows(cx, path_string, path_clone, None, None);
                         })
                         .ok();
                     } else {
