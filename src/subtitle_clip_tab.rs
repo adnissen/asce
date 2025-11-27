@@ -271,7 +271,7 @@ impl Render for SubtitleClipTab {
                     .items_center()
                     .px_2()
                     .py_1()
-                    .child(Checkbox::new(&self.custom_checkbox).label("custom")),
+                    .child(Checkbox::new(&self.custom_checkbox).label("Custom")),
             )
             .child(
                 div()

@@ -10,6 +10,39 @@ use crate::time_input::TimeInput;
 use crate::video_player::ClockTime;
 use crate::AppState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Video,
+    Gif,
+    Audio,
+}
+
+impl ExportFormat {
+    fn next(&self) -> Self {
+        match self {
+            ExportFormat::Video => ExportFormat::Gif,
+            ExportFormat::Gif => ExportFormat::Audio,
+            ExportFormat::Audio => ExportFormat::Video,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            ExportFormat::Video => "video",
+            ExportFormat::Gif => "gif",
+            ExportFormat::Audio => "audio",
+        }
+    }
+
+    fn file_extension(&self) -> &'static str {
+        match self {
+            ExportFormat::Video => "_clip.mp4",
+            ExportFormat::Gif => "_clip.gif",
+            ExportFormat::Audio => "_clip.mp3",
+        }
+    }
+}
+
 /// Controls window with play/pause/stop buttons and video scrubber
 pub struct ControlsWindow {
     slider_state: Entity<SliderState>,
@@ -21,7 +54,7 @@ pub struct ControlsWindow {
     subtitle_font_size_slider: Entity<SliderState>,
     subtitle_bold_checkbox: Entity<CheckboxState>,
     subtitle_italic_checkbox: Entity<CheckboxState>,
-    export_as_gif_checkbox: Entity<CheckboxState>,
+    export_format: ExportFormat,
     current_position: f32,
     duration: f32,
     is_playing: bool,
@@ -198,9 +231,6 @@ impl ControlsWindow {
         )
         .detach();
 
-        // Create export as GIF checkbox (unchecked by default)
-        let export_as_gif_checkbox = cx.new(|_cx| CheckboxState::new(false));
-
         Self {
             slider_state,
             display_subtitles,
@@ -210,7 +240,7 @@ impl ControlsWindow {
             subtitle_font_size_slider,
             subtitle_bold_checkbox,
             subtitle_italic_checkbox,
-            export_as_gif_checkbox,
+            export_format: ExportFormat::Video,
             current_position: 0.0,
             duration: 0.0,
             is_playing: false,
@@ -341,7 +371,11 @@ impl ControlsWindow {
             .read(cx)
             .parse_time_ms()
             .or(self.clip_start);
-        let end_ms = self.clip_end_input.read(cx).parse_time_ms().or(self.clip_end);
+        let end_ms = self
+            .clip_end_input
+            .read(cx)
+            .parse_time_ms()
+            .or(self.clip_end);
 
         start_ms.is_some() && end_ms.is_some() && start_ms.unwrap() < end_ms.unwrap()
     }
@@ -387,8 +421,8 @@ impl ControlsWindow {
             }
         };
 
-        // Check if we should export as GIF
-        let export_as_gif = self.export_as_gif_checkbox.read(cx).is_checked();
+        // Get the current export format
+        let export_format = self.export_format;
 
         // Generate default output filename and directory
         let input_path_buf = std::path::PathBuf::from(&input_path);
@@ -402,7 +436,7 @@ impl ControlsWindow {
             .and_then(|n| n.to_str())
             .unwrap_or("video")
             .to_string()
-            + if export_as_gif { "_clip.gif" } else { "_clip.mp4" };
+            + export_format.file_extension();
 
         // Prompt for save location
         let path_receiver = cx.prompt_for_new_path(directory, Some(&default_filename));
@@ -432,38 +466,45 @@ impl ControlsWindow {
                 let export_result = cx
                     .background_executor()
                     .spawn(async move {
-                        if export_as_gif {
-                            // Export as GIF with subtitle settings
-                            crate::ffmpeg_export::export_gif(
-                                &input_path_clone,
-                                &output_path_str_clone,
-                                clip_start,
-                                clip_end,
-                                if display_subtitles {
-                                    Some(&subtitle_settings_clone)
-                                } else {
-                                    None
-                                },
-                                display_subtitles,
-                                selected_subtitle_track,
-                                source_video_width,
-                            )
-                        } else {
-                            // Export as video (MP4)
-                            crate::ffmpeg_export::export_clip(
-                                &input_path_clone,
-                                &output_path_str_clone,
-                                clip_start,
-                                clip_end,
-                                if display_subtitles {
-                                    Some(&subtitle_settings_clone)
-                                } else {
-                                    None
-                                },
-                                display_subtitles,
-                                selected_subtitle_track,
-                                source_video_width,
-                            )
+                        match export_format {
+                            ExportFormat::Gif => {
+                                // Export as GIF with subtitle settings
+                                crate::ffmpeg_export::export_gif(
+                                    &input_path_clone,
+                                    &output_path_str_clone,
+                                    clip_start,
+                                    clip_end,
+                                    if display_subtitles {
+                                        Some(&subtitle_settings_clone)
+                                    } else {
+                                        None
+                                    },
+                                    display_subtitles,
+                                    selected_subtitle_track,
+                                    source_video_width,
+                                )
+                            }
+                            ExportFormat::Audio => {
+                                // Audio export - no-op for now
+                                Ok(())
+                            }
+                            ExportFormat::Video => {
+                                // Export as video (MP4)
+                                crate::ffmpeg_export::export_clip(
+                                    &input_path_clone,
+                                    &output_path_str_clone,
+                                    clip_start,
+                                    clip_end,
+                                    if display_subtitles {
+                                        Some(&subtitle_settings_clone)
+                                    } else {
+                                        None
+                                    },
+                                    display_subtitles,
+                                    selected_subtitle_track,
+                                    source_video_width,
+                                )
+                            }
                         }
                     })
                     .await;
@@ -501,41 +542,41 @@ impl Render for ControlsWindow {
                 // Update from video player and request next frame
                 t.update_position_from_player(cx);
 
-            // Check if we need to pause during clip playback
-            if t.is_playing_clip {
-                if let Some(end_time_ms) = t.clip_playback_end {
-                    let current_time_ms = t.current_position * 1000.0;
-                    // it takes a moment for the video player to actually update its position when we seek
-                    // this means that for a small amount of time, the current_time_ms might be
-                    // well ahead or behind or the actual position the user is seeking to.
-                    //
-                    // it appears to almost always (on this computer) be less than a millisecond or two,
-                    // but potentially more than one frame.
-                    //
-                    // to prevent automatically pausing when the user is trying to play a clip
-                    // (because for a moment we think we're past our desired pause point),
-                    // we store the time in milliseconds the user was AT when they hit the "play clip" button
-                    // if the video player is reporting it's still in the same millisecond or +/- 1 ms, don't auto pause
-                    let past_seek_time = t
-                        .last_seek_time
-                        .map_or(true, |seek_time| (current_time_ms - seek_time).abs() > 0.1);
-                    if past_seek_time && current_time_ms >= end_time_ms {
-                        // Stop clip playback
-                        t.is_playing_clip = false;
-                        t.clip_playback_end = None;
+                // Check if we need to pause during clip playback
+                if t.is_playing_clip {
+                    if let Some(end_time_ms) = t.clip_playback_end {
+                        let current_time_ms = t.current_position * 1000.0;
+                        // it takes a moment for the video player to actually update its position when we seek
+                        // this means that for a small amount of time, the current_time_ms might be
+                        // well ahead or behind or the actual position the user is seeking to.
+                        //
+                        // it appears to almost always (on this computer) be less than a millisecond or two,
+                        // but potentially more than one frame.
+                        //
+                        // to prevent automatically pausing when the user is trying to play a clip
+                        // (because for a moment we think we're past our desired pause point),
+                        // we store the time in milliseconds the user was AT when they hit the "play clip" button
+                        // if the video player is reporting it's still in the same millisecond or +/- 1 ms, don't auto pause
+                        let past_seek_time = t
+                            .last_seek_time
+                            .map_or(true, |seek_time| (current_time_ms - seek_time).abs() > 0.1);
+                        if past_seek_time && current_time_ms >= end_time_ms {
+                            // Stop clip playback
+                            t.is_playing_clip = false;
+                            t.clip_playback_end = None;
 
-                        // Pause the player
-                        let app_state = cx.global::<AppState>();
-                        let video_player = app_state.video_player.clone();
-                        if let Ok(player) = video_player.lock() {
-                            println!("Pausing because of the clip playback end check");
-                            if let Err(e) = player.pause() {
-                                eprintln!("Failed to pause after clip playback: {}", e);
-                            }
-                        };
+                            // Pause the player
+                            let app_state = cx.global::<AppState>();
+                            let video_player = app_state.video_player.clone();
+                            if let Ok(player) = video_player.lock() {
+                                println!("Pausing because of the clip playback end check");
+                                if let Err(e) = player.pause() {
+                                    eprintln!("Failed to pause after clip playback: {}", e);
+                                }
+                            };
+                        }
                     }
                 }
-            }
 
                 // Rate limit renders to 30 FPS (33.33ms per frame)
                 const FRAME_DURATION_MS: u128 = 33; // 1000ms / 30fps ≈ 33.33ms
@@ -773,81 +814,26 @@ impl Render for ControlsWindow {
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            // GIF export checkbox - small and above duration label
+                                            // Export format button - cycles through video/gif/audio
                                             .child(
                                                 div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(
-                                                        div()
-                                                            .size(px(12.0))
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_center()
-                                                            .bg(
-                                                                if self
-                                                                    .export_as_gif_checkbox
-                                                                    .read(cx)
-                                                                    .is_checked()
-                                                                {
-                                                                    OneDarkTheme::element_background()
-                                                                } else {
-                                                                    OneDarkTheme::border_transparent()
-                                                                },
-                                                            )
-                                                            .border_1()
-                                                            .border_color(OneDarkTheme::border())
-                                                            .rounded(px(2.))
-                                                            .cursor_pointer()
-                                                            .hover(|style| {
-                                                                style.bg(
-                                                                    if self
-                                                                        .export_as_gif_checkbox
-                                                                        .read(cx)
-                                                                        .is_checked()
-                                                                    {
-                                                                        OneDarkTheme::element_background()
-                                                                    } else {
-                                                                        OneDarkTheme::element_hover()
-                                                                    },
-                                                                )
-                                                            })
-                                                            .on_mouse_down(
-                                                                MouseButton::Left,
-                                                                window.listener_for(
-                                                                    &self.export_as_gif_checkbox,
-                                                                    |state, _, _, cx| {
-                                                                        let new_value =
-                                                                            !state.is_checked();
-                                                                        state.set_checked(
-                                                                            new_value, cx,
-                                                                        );
-                                                                    },
-                                                                ),
-                                                            )
-                                                            .when(
-                                                                self.export_as_gif_checkbox
-                                                                    .read(cx)
-                                                                    .is_checked(),
-                                                                |el| {
-                                                                    el.child(
-                                                                        div()
-                                                                            .text_xs()
-                                                                            .text_color(
-                                                                                OneDarkTheme::text(),
-                                                                            )
-                                                                            .child("✓"),
-                                                                    )
-                                                                },
-                                                            ),
+                                                    .px_2()
+                                                    .py_1()
+                                                    .bg(OneDarkTheme::element_hover())
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .text_xs()
+                                                    .text_color(OneDarkTheme::text())
+                                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(|this, _, _, cx| {
+                                                            // Cycle through formats: video -> gif -> audio -> video
+                                                            this.export_format = this.export_format.next();
+                                                            cx.notify();
+                                                        }),
                                                     )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(OneDarkTheme::text_muted())
-                                                            .child("GIF"),
-                                                    ),
+                                                    .child(format!("{}", self.export_format.as_str().to_uppercase())),
                                             )
                                             .child(
                                                 div()
