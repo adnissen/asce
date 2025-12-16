@@ -3,12 +3,12 @@ use gpui::{
     div, prelude::*, px, size, Context, Entity, IntoElement, MouseButton, Pixels, Render,
     ScrollStrategy, Size, Window,
 };
-use gpui_component::{v_virtual_list, VirtualListScrollHandle};
+use gpui_component::{input::Paste, v_virtual_list, VirtualListScrollHandle};
 use std::rc::Rc;
 
 use gpui_component::{
     checkbox::Checkbox,
-    input::InputState,
+    input::{Input, InputState},
     menu::{ContextMenuExt, PopupMenuItem},
     select::{Select, SelectEvent, SelectItem, SelectState},
     IndexPath,
@@ -411,12 +411,11 @@ impl SubtitleWindow {
     }
 
     /// Handle Escape key in search input
-    fn on_search_escape(&mut self, cx: &mut Context<Self>) {
+    fn on_search_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Clear search and results
-        // TODO: Find the proper way to clear text in gpui-component InputState
-        // self.search_input.update(cx, |input, cx| {
-        //     input.replace_text("", cx);
-        // });
+        self.search_input.update(cx, |input, cx| {
+            input.set_value("".to_string(), window, cx);
+        });
         self.search_result_indices.clear();
         self.current_search_result_index = None;
         self.last_scrolled_to_search = None;
@@ -649,18 +648,18 @@ impl Render for SubtitleWindow {
                     .child(
                         div()
                             .w_full()
-                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                                 match event.keystroke.key.as_str() {
                                     "enter" => {
                                         this.on_search_enter(cx);
                                     }
                                     "escape" => {
-                                        this.on_search_escape(cx);
+                                        this.on_search_escape(window, cx);
                                     }
                                     _ => {}
                                 }
                             }))
-                            .child(self.search_input.clone()),
+                            .child(Input::new(&self.search_input)),
                     ),
             )
             .child(
@@ -891,7 +890,7 @@ impl Render for SubtitleWindow {
                                                                         });
                                                                         eprintln!("=== DONE ===");
                                                                     }
-                                                                }).disabled(false)
+                                                                })
                                                             )
                                                         })
                                                         .child(entry.text.clone()),
