@@ -3,7 +3,7 @@ use gpui::{
     div, prelude::*, px, size, Context, Entity, IntoElement, MouseButton, Pixels, Render,
     ScrollStrategy, Size, Window,
 };
-use gpui_component::{input::Paste, v_virtual_list, VirtualListScrollHandle};
+use gpui_component::{v_virtual_list, VirtualListScrollHandle};
 use std::rc::Rc;
 
 use gpui_component::{
@@ -570,7 +570,7 @@ impl Render for SubtitleWindow {
                                     cx.notify();
                                 }),
                             )
-                            .child("Video"),
+                            .child("Video")
                     )
                     .child(
                         // Clip tab
@@ -748,7 +748,7 @@ impl Render for SubtitleWindow {
                                                                 .context_menu(move |menu, _window, _cx| {
                                                                     // Right-click menu for start timestamp
                                                                     eprintln!("Building start timestamp context menu");
-                                                                    let menu = menu.item(
+                                                                    menu.item(
                                                                         PopupMenuItem::new("Set clip start").on_click(move |_, _, cx| {
                                                                             eprintln!("=== SET CLIP START CLICKED! time_ms={} ===", start_ms);
                                                                             let app_state = cx.global::<AppState>();
@@ -763,8 +763,7 @@ impl Render for SubtitleWindow {
                                                                                 });
                                                                             }
                                                                         })
-                                                                    );
-                                                                    let menu = menu.item(
+                                                                    ).item(
                                                                         PopupMenuItem::new("Set clip end").on_click(move |_, _, cx| {
                                                                             eprintln!("=== SET CLIP END CLICKED! time_ms={} ===", start_ms);
                                                                             let app_state = cx.global::<AppState>();
@@ -779,8 +778,7 @@ impl Render for SubtitleWindow {
                                                                                 });
                                                                             }
                                                                         })
-                                                                    );
-                                                                    menu.item(
+                                                                    ).item(
                                                                         PopupMenuItem::new("Clip block").on_click(move |_, _, cx| {
                                                                             eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
                                                                             let app_state = cx.global::<AppState>();
@@ -811,7 +809,7 @@ impl Render for SubtitleWindow {
                                                                 .context_menu(move |menu, _window, _cx| {
                                                                     // Right-click menu for end timestamp
                                                                     eprintln!("Building end timestamp context menu");
-                                                                    let menu = menu.item(
+                                                                    menu.item(
                                                                         PopupMenuItem::new("Set clip start").on_click(move |_, _, cx| {
                                                                             eprintln!("=== SET CLIP START CLICKED! time_ms={} ===", end_ms);
                                                                             let app_state = cx.global::<AppState>();
@@ -826,8 +824,7 @@ impl Render for SubtitleWindow {
                                                                                 });
                                                                             }
                                                                         })
-                                                                    );
-                                                                    let menu = menu.item(
+                                                                    ).item(
                                                                         PopupMenuItem::new("Set clip end").on_click(move |_, _, cx| {
                                                                             eprintln!("=== SET CLIP END CLICKED! time_ms={} ===", end_ms);
                                                                             let app_state = cx.global::<AppState>();
@@ -842,8 +839,7 @@ impl Render for SubtitleWindow {
                                                                                 });
                                                                             }
                                                                         })
-                                                                    );
-                                                                    menu.item(
+                                                                    ).item(
                                                                         PopupMenuItem::new("Clip block").on_click(move |_, _, cx| {
                                                                             eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
                                                                             let app_state = cx.global::<AppState>();
@@ -861,6 +857,8 @@ impl Render for SubtitleWindow {
                                                                     )
                                                                 })
                                                                 .child(entry.format_end_time())
+
+
                                                         )
                                                 )
                                                 .child(
