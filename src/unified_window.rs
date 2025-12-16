@@ -32,7 +32,7 @@ pub struct UnifiedWindow {
 }
 
 impl UnifiedWindow {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Get the file name from AppState for the titlebar
         let app_state = cx.global::<crate::AppState>();
         let file_name = app_state
@@ -48,8 +48,8 @@ impl UnifiedWindow {
 
         // Create the titlebar, controls, and subtitle views
         let titlebar = cx.new(|_| CustomTitlebar::new(file_name));
-        let controls = cx.new(|cx| ControlsWindow::new(cx));
-        let subtitles = cx.new(|cx| SubtitleWindow::new(cx));
+        let controls = cx.new(|cx| ControlsWindow::new(window, cx));
+        let subtitles = cx.new(|cx| SubtitleWindow::new(window, cx));
 
         // Give subtitles a reference to controls so it can check clip state
         subtitles.update(cx, |subs, cx| {
@@ -236,33 +236,6 @@ impl Render for UnifiedWindow {
             .flex_col()
             .bg(OneDarkTheme::editor_background())
             .size_full()
-            // Close subtitle context menu on any click outside the subtitle window
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    // Check if subtitle window has an open context menu and close it
-                    this.subtitles.update(cx, |subtitles, cx| {
-                        if subtitles.context_menu.is_some() {
-                            println!("Closing context menu from unified window click");
-                            subtitles.context_menu = None;
-                            cx.notify();
-                        }
-                    });
-                }),
-            )
-            .on_mouse_down(
-                gpui::MouseButton::Right,
-                cx.listener(|this, _, _, cx| {
-                    // Close context menu on right-click anywhere
-                    this.subtitles.update(cx, |subtitles, cx| {
-                        if subtitles.context_menu.is_some() {
-                            println!("Closing context menu from unified window right-click");
-                            subtitles.context_menu = None;
-                            cx.notify();
-                        }
-                    });
-                }),
-            )
             // Custom titlebar
             .child(self.titlebar.clone())
             // Top section: video (left) and subtitles (right)

@@ -8,16 +8,12 @@ extern crate objc;
 
 use clap::Parser;
 
-mod checkbox;
 mod controls_window;
 mod custom_titlebar;
 mod ffmpeg_export;
 mod font_utils;
 mod initial_window;
-mod input;
 mod platform;
-mod select;
-mod slider;
 mod subtitle_clip_tab;
 mod subtitle_detector;
 mod subtitle_extractor;
@@ -27,11 +23,10 @@ mod time_input;
 mod unified_window;
 mod video_player;
 mod video_player_window;
-mod virtual_list;
 
 use gpui::{
-    actions, px, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Global, Menu,
-    MenuItem, PathPromptOptions, SystemMenuType, WindowOptions,
+    actions, px, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Entity, Global,
+    Menu, MenuItem, PathPromptOptions, SystemMenuType, WindowOptions,
 };
 use unified_window::UnifiedWindow;
 use video_player::ClockTime;
@@ -249,6 +244,9 @@ fn main() {
     Application::new().run(move |cx: &mut App| {
         cx.set_global(AppState::new());
 
+        // Initialize gpui-component (required before using any gpui-component features)
+        gpui_component::init(cx);
+
         // Bring the menu bar to the foreground (so you can see the menu bar)
         cx.activate(true);
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
@@ -261,22 +259,6 @@ fn main() {
             time_input::Backspace,
             Some("TimeInput"),
         )]);
-
-        // Bind keys for input component
-        cx.bind_keys([
-            gpui::KeyBinding::new("backspace", input::state::Backspace, Some("InputState")),
-            gpui::KeyBinding::new("delete", input::state::Delete, Some("InputState")),
-            gpui::KeyBinding::new("enter", input::state::Enter, Some("InputState")),
-            gpui::KeyBinding::new("escape", input::state::Escape, Some("InputState")),
-            gpui::KeyBinding::new("left", input::state::Left, Some("InputState")),
-            gpui::KeyBinding::new("right", input::state::Right, Some("InputState")),
-            gpui::KeyBinding::new("up", input::state::Up, Some("InputState")),
-            gpui::KeyBinding::new("down", input::state::Down, Some("InputState")),
-            gpui::KeyBinding::new("cmd-a", input::state::SelectAll, Some("InputState")),
-            gpui::KeyBinding::new("cmd-c", input::state::Copy, Some("InputState")),
-            gpui::KeyBinding::new("cmd-x", input::state::Cut, Some("InputState")),
-            gpui::KeyBinding::new("cmd-v", input::state::Paste, Some("InputState")),
-        ]);
 
         // Add menu items
         set_app_menus(cx);
@@ -340,15 +322,32 @@ fn main() {
                 ..Default::default()
             };
 
+            // Store UnifiedWindow entity in a variable accessible to the closure
+            let unified_entity_holder: Arc<Mutex<Option<Entity<UnifiedWindow>>>> =
+                Arc::new(Mutex::new(None));
+            let holder_clone = unified_entity_holder.clone();
+
             let window = cx
-                .open_window(unified_window_options, |_window, cx| {
-                    cx.new(|cx| UnifiedWindow::new(cx))
+                .open_window(unified_window_options, move |window, cx| {
+                    let unified_entity = cx.new(|cx| UnifiedWindow::new(window, cx));
+
+                    // Store the entity for later access
+                    if let Ok(mut holder) = holder_clone.lock() {
+                        *holder = Some(unified_entity.clone());
+                    }
+
+                    cx.new(|cx| {
+                        use gpui::AnyView;
+                        gpui_component::Root::new(AnyView::from(unified_entity), window, cx)
+                    })
                 })
                 .unwrap();
 
-            // Store the unified window handle
+            // Store the unified window handle and entity
+            let unified_entity = unified_entity_holder.lock().unwrap().clone();
             cx.update_global::<AppState, _>(|state, _| {
                 state.unified_window = Some(window.into());
+                state.unified_window_entity = unified_entity;
             });
 
             println!("Unified window created (no video loaded)");
@@ -411,6 +410,7 @@ pub struct AppState {
     pub file_path: Option<String>,
     pub initial_window: Option<AnyWindowHandle>,
     pub unified_window: Option<AnyWindowHandle>,
+    pub unified_window_entity: Option<Entity<UnifiedWindow>>, // Entity for accessing UnifiedWindow fields
     pub video_nsview: Option<usize>, // Pointer to the child NSView for video rendering
     pub video_player: Arc<Mutex<video_player::VideoPlayer>>,
     pub synced_to_video: bool,
@@ -428,10 +428,11 @@ impl AppState {
             file_path: None,
             initial_window: None,
             unified_window: None,
+            unified_window_entity: None,
             video_nsview: None,
             video_player: Arc::new(Mutex::new(video_player::VideoPlayer::new())),
             synced_to_video: true,            // Default to checked/synced
-            selected_subtitle_track: Some(0), // No track selected initially
+            selected_subtitle_track: Some(1), // the first track is selected initially so that when the user clicks the subtitles toggle they turn on
             display_subtitles: false,
             subtitle_settings: SubtitleSettings::default(),
             source_video_width: 1920, // Default to 1920 (will be updated when video loads)
@@ -517,11 +518,29 @@ pub fn create_video_windows(
         ..Default::default()
     };
 
+    // Store UnifiedWindow entity in a variable accessible to the closure
+    let unified_entity_holder: Arc<Mutex<Option<Entity<UnifiedWindow>>>> =
+        Arc::new(Mutex::new(None));
+    let holder_clone = unified_entity_holder.clone();
+
     let unified_window = cx
-        .open_window(unified_window_options, |_window, cx| {
-            cx.new(|cx| UnifiedWindow::new(cx))
+        .open_window(unified_window_options, move |window, cx| {
+            let unified_entity = cx.new(|cx| UnifiedWindow::new(window, cx));
+
+            // Store the entity for later access
+            if let Ok(mut holder) = holder_clone.lock() {
+                *holder = Some(unified_entity.clone());
+            }
+
+            cx.new(|cx| {
+                use gpui::AnyView;
+                gpui_component::Root::new(AnyView::from(unified_entity), window, cx)
+            })
         })
         .unwrap();
+
+    // Extract the unified entity from the holder
+    let unified_window_entity = unified_entity_holder.lock().unwrap().clone().unwrap();
 
     println!("Unified window created");
 
@@ -551,6 +570,7 @@ pub fn create_video_windows(
     cx.update_global::<AppState, _>(|state, _| {
         state.initial_window = None;
         state.unified_window = Some(unified_window.into());
+        state.unified_window_entity = Some(unified_window_entity.clone());
         state.video_nsview = None;
         state.file_path = Some(path_string.clone());
         state.source_video_width = video_width;
@@ -558,27 +578,23 @@ pub fn create_video_windows(
     });
 
     // Update the titlebar with the filename
-    unified_window
-        .update(cx, |unified_window, _, cx| {
-            unified_window.titlebar.update(cx, |titlebar, cx| {
-                titlebar.set_title(file_name.clone());
-                cx.notify();
-            });
-        })
-        .ok();
+    unified_window_entity.update(cx, |unified_window, cx| {
+        unified_window.titlebar.update(cx, |titlebar, cx| {
+            titlebar.set_title(file_name.clone());
+            cx.notify();
+        });
+    });
 
     // Set initial clip times if provided via CLI
     if let (Some(start_ms), Some(end_ms)) = (clip_start, clip_end) {
-        unified_window
-            .update(cx, |unified_window, _, cx| {
-                let controls_entity = unified_window.controls.clone();
-                controls_entity.update(cx, |controls, cx| {
-                    // Convert f32 milliseconds to u64 for set_clip_times
-                    controls.set_clip_times(start_ms as u64, end_ms as u64, cx);
-                    println!("Set initial clip times: {} ms to {} ms", start_ms, end_ms);
-                });
-            })
-            .ok();
+        unified_window_entity.update(cx, |unified_window, cx| {
+            let controls_entity = unified_window.controls.clone();
+            controls_entity.update(cx, |controls, cx| {
+                // Convert f32 milliseconds to u64 for set_clip_times
+                controls.set_clip_times(start_ms as u64, end_ms as u64, cx);
+                println!("Set initial clip times: {} ms to {} ms", start_ms, end_ms);
+            });
+        });
     }
 
     // Extract and set the display handle for the video window
@@ -670,23 +686,28 @@ pub fn create_video_windows(
 
             // Update UI on main thread with loaded data
             if let Some(data) = subtitle_data {
+                // Update directly using the stored unified_window_entity from AppState
                 cx.update(|cx| {
-                    window_handle
-                        .update(cx, |any_view, _, app_cx| {
-                            if let Ok(unified_window) = any_view.downcast::<UnifiedWindow>() {
-                                // First get the subtitle entity, then update it
-                                let subtitle_entity = unified_window.read(app_cx).subtitles.clone();
+                    // Get the unified_window_entity from AppState
+                    let app_state = cx.global::<AppState>();
+                    let unified_window_entity = app_state.unified_window_entity.clone();
+
+                    if let Some(unified_window_entity) = unified_window_entity {
+                        // Get the subtitle entity
+                        let subtitle_entity = unified_window_entity.read(cx).subtitles.clone();
+
+                        // Update in the window context
+                        window_handle
+                            .update(cx, |_any_view, window, app_cx| {
+                                // Update the subtitle window with the data
                                 subtitle_entity.update(app_cx, |subtitle_window, cx| {
-                                    println!("Updating subtitle window with loaded data");
-                                    subtitle_window.update_with_loaded_data(data, cx);
+                                    subtitle_window.update_with_loaded_data(window, data, cx);
                                 });
-                            }
-                        })
-                        .ok();
+                            })
+                            .ok();
+                    }
                 })
                 .ok();
-            } else {
-                println!("No subtitle data loaded");
             }
         })
         .detach();

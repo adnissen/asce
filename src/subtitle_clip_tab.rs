@@ -1,5 +1,7 @@
-use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
-use crate::input::InputState;
+use gpui_component::{
+    checkbox::Checkbox,
+    input::InputState,
+};
 use crate::subtitle_extractor::SubtitleEntry;
 use gpui::{div, prelude::*, Context, Entity, IntoElement, Render, ScrollHandle, Window};
 
@@ -9,23 +11,14 @@ pub struct SubtitleClipTab {
     controls: Option<Entity<crate::controls_window::ControlsWindow>>,
     subtitle_entries: Vec<SubtitleEntry>, // Reference to subtitle entries
     scroll_handle: ScrollHandle,          // For scrolling the text box
-    custom_checkbox: Entity<CheckboxState>, // Checkbox for custom subtitle mode
+    custom_mode_enabled: bool,            // Track custom subtitle mode state
     last_loaded_content: String,          // Track last loaded content to avoid redundant reloads
 }
 
 impl SubtitleClipTab {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Create custom subtitle input with custom placeholder
-        let custom_subtitle_input = cx.new(|cx| {
-            let mut input = InputState::new(cx);
-            input.set_placeholder("Enter text");
-            input.set_multiline(true);
-            input.set_fill_height(false); // Don't fill height - let it grow with content for scrolling
-            input
-        });
-
-        // Create checkbox for custom mode (default off)
-        let custom_checkbox = cx.new(|_cx| CheckboxState::new(false));
+        let custom_subtitle_input = cx.new(|cx| InputState::new(window, cx));
 
         // Subscribe to custom subtitle input changes to reload subtitles when in custom mode
         cx.observe(&custom_subtitle_input, |this, _input, cx| {
@@ -64,79 +57,80 @@ impl SubtitleClipTab {
         })
         .detach();
 
-        // Subscribe to checkbox changes to update global state and load/unload custom subtitles
-        cx.subscribe(&custom_checkbox, |this, _, event: &CheckboxEvent, cx| {
-            if let CheckboxEvent::Change(checked) = event {
-                cx.update_global::<crate::AppState, _>(|state, _| {
-                    state.custom_subtitle_mode = *checked;
-                });
-
-                // Load or unload custom subtitles
-                if *checked {
-                    // Custom mode enabled - load custom subtitles
-                    let srt_content = this.get_custom_subtitle_srt(cx);
-
-                    if !srt_content.trim().is_empty() {
-                        let video_player = cx.global::<crate::AppState>().video_player.clone();
-                        let lock_result = video_player.lock();
-
-                        match lock_result {
-                            Ok(player) => match player.add_subtitle_from_text(&srt_content) {
-                                Ok(track_id) => {
-                                    println!("Custom subtitle loaded as track {}", track_id);
-                                    // Update the last loaded content after successful load
-                                    this.last_loaded_content = srt_content.clone();
-                                }
-                                Err(e) => {
-                                    eprintln!("Failed to load custom subtitle: {}", e);
-                                }
-                            },
-                            Err(e) => {
-                                eprintln!("Failed to lock video player: {}", e);
-                            }
-                        }
-                    } else {
-                        println!("No custom subtitle text to load");
-                    }
-                } else {
-                    // Custom mode disabled - remove custom subtitles
-                    let video_player = cx.global::<crate::AppState>().video_player.clone();
-                    let selected_track = cx.global::<crate::AppState>().selected_subtitle_track;
-                    let lock_result = video_player.lock();
-
-                    match lock_result {
-                        Ok(player) => {
-                            if let Err(e) = player.remove_custom_subtitles() {
-                                eprintln!("Failed to remove custom subtitles: {}", e);
-                            }
-
-                            // Re-enable the original subtitle track if one was selected
-                            if let Some(track_index) = selected_track {
-                                if let Err(e) = player.set_subtitle_track(track_index as i32) {
-                                    eprintln!("Failed to restore original subtitle track: {}", e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to lock video player: {}", e);
-                        }
-                    }
-
-                    // Clear last loaded content when disabling custom mode
-                    this.last_loaded_content.clear();
-                }
-            }
-        })
-        .detach();
-
         Self {
             custom_subtitle_input,
             controls: None,
             subtitle_entries: Vec::new(),
             scroll_handle: ScrollHandle::new(),
-            custom_checkbox,
+            custom_mode_enabled: false, // Start with custom mode disabled
             last_loaded_content: String::new(),
         }
+    }
+
+    /// Handle checkbox toggle for custom subtitle mode
+    fn toggle_custom_mode(&mut self, checked: bool, cx: &mut Context<Self>) {
+        self.custom_mode_enabled = checked;
+
+        cx.update_global::<crate::AppState, _>(|state, _| {
+            state.custom_subtitle_mode = checked;
+        });
+
+        // Load or unload custom subtitles
+        if checked {
+            // Custom mode enabled - load custom subtitles
+            let srt_content = self.get_custom_subtitle_srt(cx);
+
+            if !srt_content.trim().is_empty() {
+                let video_player = cx.global::<crate::AppState>().video_player.clone();
+                let lock_result = video_player.lock();
+
+                match lock_result {
+                    Ok(player) => match player.add_subtitle_from_text(&srt_content) {
+                        Ok(track_id) => {
+                            println!("Custom subtitle loaded as track {}", track_id);
+                            // Update the last loaded content after successful load
+                            self.last_loaded_content = srt_content.clone();
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to load custom subtitle: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Failed to lock video player: {}", e);
+                    }
+                }
+            } else {
+                println!("No custom subtitle text to load");
+            }
+        } else {
+            // Custom mode disabled - remove custom subtitles
+            let video_player = cx.global::<crate::AppState>().video_player.clone();
+            let selected_track = cx.global::<crate::AppState>().selected_subtitle_track;
+            let lock_result = video_player.lock();
+
+            match lock_result {
+                Ok(player) => {
+                    if let Err(e) = player.remove_custom_subtitles() {
+                        eprintln!("Failed to remove custom subtitles: {}", e);
+                    }
+
+                    // Re-enable the original subtitle track if one was selected
+                    if let Some(track_index) = selected_track {
+                        if let Err(e) = player.set_subtitle_track(track_index as i32) {
+                            eprintln!("Failed to restore original subtitle track: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to lock video player: {}", e);
+                }
+            }
+
+            // Clear last loaded content when disabling custom mode
+            self.last_loaded_content.clear();
+        }
+
+        cx.notify();
     }
 
     /// Set the controls window reference (called by SubtitleWindow)
@@ -146,12 +140,12 @@ impl SubtitleClipTab {
 
     /// Get the custom subtitle text
     pub fn get_custom_subtitle_text(&self, cx: &Context<Self>) -> String {
-        self.custom_subtitle_input.read(cx).content()
+        self.custom_subtitle_input.read(cx).text().to_string()
     }
 
     /// Convert the custom subtitle text to proper SRT format with sequence numbers
     pub fn get_custom_subtitle_srt(&self, cx: &Context<Self>) -> String {
-        let content = self.custom_subtitle_input.read(cx).content();
+        let content = self.custom_subtitle_input.read(cx).text().to_string();
 
         // Parse the content and add sequence numbers
         let mut srt_output = String::new();
@@ -216,10 +210,11 @@ impl SubtitleClipTab {
             srt_text.push('\n');
         }
 
-        // Update the text box without resetting cursor position
-        self.custom_subtitle_input.update(cx, |input, cx| {
-            input.set_content_with_cursor(srt_text.clone(), false, cx);
-        });
+        // Update the text box
+        // TODO: Find the proper way to set text in gpui-component InputState
+        // self.custom_subtitle_input.update(cx, |input, cx| {
+        //     input.replace_text(&srt_text, cx);
+        // });
     }
 
     /// Check if there's a valid clip range and update if needed
@@ -254,9 +249,11 @@ impl SubtitleClipTab {
 impl Render for SubtitleClipTab {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // keep the clip subtitles aligned with the real ones unless the custom checkbox is checked
-        if !self.custom_checkbox.read(cx).is_checked() {
+        if !self.custom_mode_enabled {
             self.check_and_update_clip(cx);
         }
+
+        let custom_mode_enabled = self.custom_mode_enabled;
 
         div()
             .w_full()
@@ -271,7 +268,14 @@ impl Render for SubtitleClipTab {
                     .items_center()
                     .px_2()
                     .py_1()
-                    .child(Checkbox::new(&self.custom_checkbox).label("Custom")),
+                    .child(
+                        Checkbox::new("custom-mode-checkbox")
+                            .label("Custom")
+                            .checked(custom_mode_enabled)
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.toggle_custom_mode(*checked, cx);
+                            })),
+                    ),
             )
             .child(
                 div()

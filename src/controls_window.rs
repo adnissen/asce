@@ -2,13 +2,44 @@ use crate::theme::OneDarkTheme;
 use gpui::{div, prelude::*, px, Context, Entity, IntoElement, MouseButton, Render, Window};
 use std::time::Instant;
 
-use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
 use crate::font_utils;
-use crate::select::{DropdownDirection, Select, SelectEvent, SelectState};
-use crate::slider::{Slider, SliderEvent, SliderState, SliderValue};
+use gpui_component::{
+    checkbox::Checkbox,
+    select::{Select, SelectEvent, SelectItem, SelectState},
+    slider::{Slider, SliderEvent, SliderState, SliderValue},
+    IndexPath,
+};
 use crate::time_input::TimeInput;
 use crate::video_player::ClockTime;
 use crate::AppState;
+
+// Wrapper for font names to implement SelectItem
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FontName(String);
+
+impl SelectItem for FontName {
+    type Value = Self;
+
+    fn title(&self) -> gpui::SharedString {
+        self.0.clone().into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
+}
+
+impl From<String> for FontName {
+    fn from(s: String) -> Self {
+        FontName(s)
+    }
+}
+
+impl From<FontName> for String {
+    fn from(f: FontName) -> Self {
+        f.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -45,15 +76,15 @@ impl ExportFormat {
 
 /// Controls window with play/pause/stop buttons and video scrubber
 pub struct ControlsWindow {
-    slider_state: Entity<SliderState>,
-    display_subtitles: Entity<CheckboxState>,
+    slider_state: Option<Entity<SliderState>>,
+    display_subtitles_enabled: bool,
     pub clip_start_input: Entity<TimeInput>,
     pub clip_end_input: Entity<TimeInput>,
     // Subtitle styling controls
-    subtitle_font_select: Entity<SelectState<String>>,
+    subtitle_font_select: Entity<SelectState<Vec<FontName>>>,
     subtitle_font_size_slider: Entity<SliderState>,
-    subtitle_bold_checkbox: Entity<CheckboxState>,
-    subtitle_italic_checkbox: Entity<CheckboxState>,
+    subtitle_bold_enabled: bool,
+    subtitle_italic_enabled: bool,
     export_format: ExportFormat,
     current_position: f32,
     duration: f32,
@@ -68,88 +99,41 @@ pub struct ControlsWindow {
 }
 
 impl ControlsWindow {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let slider_state = cx.new(|_cx| {
-            SliderState::new()
-                .min(0.0)
-                .max(36000.0) // Max 10 hours (will be updated once duration is known)
-                .step(0.1)
-                .default_value(0.0)
-        });
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // Slider will be created once we know the video duration
 
-        // Subscribe to slider events
-        cx.subscribe(&slider_state, |_this, _, event: &SliderEvent, cx| {
-            let SliderEvent::Change(value) = event;
-            let position_secs = value.end();
-
-            // Seek the video
-            let app_state = cx.global::<AppState>();
-            let video_player = app_state.video_player.clone();
-
-            if let Ok(player) = video_player.lock() {
-                let nanos = (position_secs * 1_000_000_000.0) as u64;
-                let clock_time = ClockTime::from_nseconds(nanos);
-                if let Err(e) = player.seek(clock_time) {
-                    eprintln!("Failed to seek: {}", e);
-                }
-            };
-        })
-        .detach();
-
-        // Create checkbox state for subtitle display (unchecked by default)
-        let display_subtitles = cx.new(|_cx| CheckboxState::new(false));
-
-        // Subscribe to checkbox events to control subtitle display
-        cx.subscribe(&display_subtitles, |_this, _, event: &CheckboxEvent, cx| {
-            let CheckboxEvent::Change(checked) = event;
-            let app_state = cx.global::<AppState>();
-            let video_player = app_state.video_player.clone();
-            let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
-            cx.update_global::<AppState, _>(|state, _| {
-                state.display_subtitles = *checked;
-            });
-            if let Ok(player) = video_player.lock() {
-                if let Err(e) = player.set_subtitle_display(*checked, selected_track) {
-                    eprintln!("Failed to set subtitle display: {}", e);
-                }
-            } else {
-                eprintln!("Failed to lock video player for subtitle display toggle");
-            };
-        })
-        .detach();
+        // Subtitle display will start as disabled (false)
 
         // Create time input fields for clip start and end
         let clip_start_input = cx.new(|cx| TimeInput::new(cx));
         let clip_end_input = cx.new(|cx| TimeInput::new(cx));
 
         // Get system fonts for the font selector
-        let system_fonts = font_utils::get_system_fonts();
+        let system_fonts: Vec<FontName> = font_utils::get_system_fonts()
+            .into_iter()
+            .map(FontName::from)
+            .collect();
 
         // Create subtitle font selector (default to Arial which should be first or near first in list)
         let subtitle_font_select = cx.new(|cx| {
-            let mut state = SelectState::new(system_fonts.clone());
+            let mut state = SelectState::new(system_fonts.clone(), None, window, cx);
             // Set default to first font (Arial)
-            state.set_selected_index(Some(0), cx);
+            state.set_selected_index(Some(IndexPath::new(0)), window, cx);
             state
         });
 
         // Subscribe to font selection changes
         cx.subscribe(
             &subtitle_font_select,
-            |_this, state_entity, event: &SelectEvent, cx| {
-                let SelectEvent::Change(_index) = event;
-                let font_name = {
-                    let state = state_entity.read(cx);
-                    state.selected_item().cloned()
-                };
-
-                if let Some(font_name) = font_name {
+            |_this, _state_entity, event: &SelectEvent<Vec<FontName>>, cx| {
+                if let SelectEvent::Confirm(Some(font_name)) = event {
+                    let font_name_str: String = font_name.clone().into();
                     let video_player = cx.global::<AppState>().video_player.clone();
                     cx.update_global::<AppState, _>(|state, _| {
-                        state.subtitle_settings.font_family = font_name.clone();
+                        state.subtitle_settings.font_family = font_name_str.clone();
                     });
                     if let Ok(player) = video_player.lock() {
-                        if let Err(e) = player.set_subtitle_font(&font_name) {
+                        if let Err(e) = player.set_subtitle_font(&font_name_str) {
                             eprintln!("Failed to set subtitle font: {}", e);
                         }
                     };
@@ -187,59 +171,15 @@ impl ControlsWindow {
         )
         .detach();
 
-        // Create subtitle bold checkbox
-        let subtitle_bold_checkbox = cx.new(|_cx| CheckboxState::new(false));
-
-        // Subscribe to bold checkbox changes
-        cx.subscribe(
-            &subtitle_bold_checkbox,
-            |_this, _, event: &CheckboxEvent, cx| {
-                let CheckboxEvent::Change(enabled) = event;
-                let app_state = cx.global::<AppState>();
-                let video_player = app_state.video_player.clone();
-                cx.update_global::<AppState, _>(|state, _| {
-                    state.subtitle_settings.bold = *enabled;
-                });
-                if let Ok(player) = video_player.lock() {
-                    if let Err(e) = player.set_subtitle_bold(*enabled) {
-                        eprintln!("Failed to set subtitle bold: {}", e);
-                    }
-                };
-            },
-        )
-        .detach();
-
-        // Create subtitle italic checkbox
-        let subtitle_italic_checkbox = cx.new(|_cx| CheckboxState::new(false));
-
-        // Subscribe to italic checkbox changes
-        cx.subscribe(
-            &subtitle_italic_checkbox,
-            |_this, _, event: &CheckboxEvent, cx| {
-                let CheckboxEvent::Change(enabled) = event;
-                let app_state = cx.global::<AppState>();
-                let video_player = app_state.video_player.clone();
-                cx.update_global::<AppState, _>(|state, _| {
-                    state.subtitle_settings.italic = *enabled;
-                });
-                if let Ok(player) = video_player.lock() {
-                    if let Err(e) = player.set_subtitle_italic(*enabled) {
-                        eprintln!("Failed to set subtitle italic: {}", e);
-                    }
-                };
-            },
-        )
-        .detach();
-
         Self {
-            slider_state,
-            display_subtitles,
+            slider_state: None,
+            display_subtitles_enabled: false,
             clip_start_input,
             clip_end_input,
             subtitle_font_select,
             subtitle_font_size_slider,
-            subtitle_bold_checkbox,
-            subtitle_italic_checkbox,
+            subtitle_bold_enabled: false,
+            subtitle_italic_enabled: false,
             export_format: ExportFormat::Video,
             current_position: 0.0,
             duration: 0.0,
@@ -254,7 +194,61 @@ impl ControlsWindow {
         }
     }
 
-    fn update_position_from_player(&mut self, cx: &mut Context<Self>) {
+    /// Handle display subtitles checkbox toggle
+    fn toggle_display_subtitles(&mut self, checked: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.display_subtitles_enabled = checked;
+
+        let app_state = cx.global::<AppState>();
+        let video_player = app_state.video_player.clone();
+        let selected_track = app_state.selected_subtitle_track.map(|t| t as i32);
+        cx.update_global::<AppState, _>(|state, _| {
+            state.display_subtitles = checked;
+        });
+        if let Ok(player) = video_player.lock() {
+            if let Err(e) = player.set_subtitle_display(checked, selected_track) {
+                eprintln!("Failed to set subtitle display: {}", e);
+            }
+        } else {
+            eprintln!("Failed to lock video player for subtitle display toggle");
+        };
+        cx.notify();
+    }
+
+    /// Handle subtitle bold checkbox toggle
+    fn toggle_subtitle_bold(&mut self, enabled: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.subtitle_bold_enabled = enabled;
+
+        let app_state = cx.global::<AppState>();
+        let video_player = app_state.video_player.clone();
+        cx.update_global::<AppState, _>(|state, _| {
+            state.subtitle_settings.bold = enabled;
+        });
+        if let Ok(player) = video_player.lock() {
+            if let Err(e) = player.set_subtitle_bold(enabled) {
+                eprintln!("Failed to set subtitle bold: {}", e);
+            }
+        };
+        cx.notify();
+    }
+
+    /// Handle subtitle italic checkbox toggle
+    fn toggle_subtitle_italic(&mut self, enabled: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.subtitle_italic_enabled = enabled;
+
+        let app_state = cx.global::<AppState>();
+        let video_player = app_state.video_player.clone();
+        cx.update_global::<AppState, _>(|state, _| {
+            state.subtitle_settings.italic = enabled;
+        });
+        if let Ok(player) = video_player.lock() {
+            if let Err(e) = player.set_subtitle_italic(enabled) {
+                eprintln!("Failed to set subtitle italic: {}", e);
+            }
+        };
+        cx.notify();
+    }
+
+    fn update_position_from_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let app_state = cx.global::<AppState>();
         let video_player = app_state.video_player.clone();
 
@@ -263,6 +257,45 @@ impl ControlsWindow {
                 // Use nseconds() to get precise nanosecond timing, then convert to seconds
                 self.current_position = position.nseconds() as f32 / 1_000_000_000.0;
                 self.duration = duration.nseconds() as f32 / 1_000_000_000.0;
+
+                // Create the slider if we don't have one yet and we have a valid duration
+                if self.slider_state.is_none() && self.duration > 0.0 {
+                    let slider_state = cx.new(|_cx| {
+                        SliderState::new()
+                            .min(0.0)
+                            .max(self.duration)
+                            .step(0.1)
+                            .default_value(0.0)
+                    });
+
+                    // Subscribe to slider events
+                    cx.subscribe(&slider_state, |_this, _, event: &SliderEvent, cx| {
+                        let SliderEvent::Change(value) = event;
+                        let position_secs = value.end();
+
+                        // Seek the video
+                        let app_state = cx.global::<AppState>();
+                        let video_player = app_state.video_player.clone();
+
+                        if let Ok(player) = video_player.lock() {
+                            let nanos = (position_secs * 1_000_000_000.0) as u64;
+                            let clock_time = ClockTime::from_nseconds(nanos);
+                            if let Err(e) = player.seek(clock_time) {
+                                eprintln!("Failed to seek: {}", e);
+                            }
+                        };
+                    })
+                    .detach();
+
+                    self.slider_state = Some(slider_state);
+                }
+
+                // Update slider position if it exists
+                if let Some(slider) = &self.slider_state {
+                    slider.update(cx, |state, cx| {
+                        state.set_value(SliderValue::Single(self.current_position), window, cx);
+                    });
+                }
             }
             self.is_playing = player.is_playing();
         };
@@ -538,9 +571,9 @@ impl Render for ControlsWindow {
 
         // Only update position if video is loaded
         if has_video_loaded {
-            cx.on_next_frame(window, |t, _window, cx| {
+            cx.on_next_frame(window, |t, window, cx| {
                 // Update from video player and request next frame
-                t.update_position_from_player(cx);
+                t.update_position_from_player(window, cx);
 
                 // Check if we need to pause during clip playback
                 if t.is_playing_clip {
@@ -591,21 +624,7 @@ impl Render for ControlsWindow {
             });
         }
 
-        // Update slider state to match current video position and duration (only if video loaded)
-        if has_video_loaded && self.duration > 0.0 {
-            // Update max if duration is known
-            let current_max = self.slider_state.read(cx).get_max();
-            if (current_max - self.duration).abs() > 0.1 {
-                // Update the slider's max value to match the video duration
-                self.slider_state.update(cx, |state, cx| {
-                    state.set_max(self.duration, window, cx);
-                });
-            }
-            // Update the position
-            self.slider_state.update(cx, |state, cx| {
-                state.set_value(SliderValue::Single(self.current_position), window, cx);
-            });
-        }
+        // Slider is updated in update_position_from_player
 
         let current_time = self.current_position;
         let duration = if self.duration > 0.0 {
@@ -621,12 +640,6 @@ impl Render for ControlsWindow {
             .size_full()
             .p_4()
             .gap_3()
-            .on_mouse_move(window.listener_for(
-                &self.slider_state,
-                |state, _e: &gpui::MouseMoveEvent, window, cx| {
-                    state.clear_hover(window, cx);
-                },
-            ))
             // Slider and time display section
             .child(
                 div()
@@ -645,8 +658,10 @@ impl Render for ControlsWindow {
                             .child(Self::format_time(current_time))
                             .child(Self::format_time(duration)),
                     )
-                    // Slider
-                    .child(Slider::new(&self.slider_state).horizontal()),
+                    // Slider (only shown when video is loaded)
+                    .when_some(self.slider_state.as_ref(), |this, slider_state| {
+                        this.child(Slider::new(slider_state).horizontal())
+                    }),
             )
             // Button controls section
             .child(
@@ -1023,7 +1038,11 @@ impl Render for ControlsWindow {
                             }),
                     )
                     // Right side: Display subtitles checkbox and styling controls
-                    .child(
+                    .child({
+                        let display_subtitles_enabled = self.display_subtitles_enabled;
+                        let subtitle_bold_enabled = self.subtitle_bold_enabled;
+                        let subtitle_italic_enabled = self.subtitle_italic_enabled;
+
                         div()
                             .flex()
                             .flex_col()
@@ -1041,161 +1060,32 @@ impl Render for ControlsWindow {
                                     .items_center()
                                     .justify_between()
                                     .child(
-                                        Checkbox::new(&self.display_subtitles).label("Subtitles"),
+                                        Checkbox::new("display-subtitles-checkbox")
+                                            .label("Subtitles")
+                                            .checked(display_subtitles_enabled)
+                                            .on_click(cx.listener(|this, checked, window, cx| {
+                                                this.toggle_display_subtitles(*checked, window, cx);
+                                            })),
                                     )
                                     .child(
                                         div()
                                             .flex()
                                             .gap_3()
                                             .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(
-                                                        div()
-                                                            .size(px(14.0))
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_center()
-                                                            .bg(
-                                                                if self
-                                                                    .subtitle_bold_checkbox
-                                                                    .read(cx)
-                                                                    .is_checked()
-                                                                {
-                                                                    OneDarkTheme::element_background()
-                                                                } else {
-                                                                    OneDarkTheme::border_transparent()
-                                                                },
-                                                            )
-                                                            .border_1()
-                                                            .border_color(OneDarkTheme::border())
-                                                            .rounded(px(2.))
-                                                            .cursor_pointer()
-                                                            .hover(|style| {
-                                                                style.bg(
-                                                                    if self
-                                                                        .subtitle_bold_checkbox
-                                                                        .read(cx)
-                                                                        .is_checked()
-                                                                    {
-                                                                        OneDarkTheme::element_background()
-                                                                    } else {
-                                                                        OneDarkTheme::element_hover()
-                                                                    },
-                                                                )
-                                                            })
-                                                            .on_mouse_down(
-                                                                MouseButton::Left,
-                                                                window.listener_for(
-                                                                    &self.subtitle_bold_checkbox,
-                                                                    |state, _, _, cx| {
-                                                                        let new_value =
-                                                                            !state.is_checked();
-                                                                        state.set_checked(
-                                                                            new_value, cx,
-                                                                        );
-                                                                    },
-                                                                ),
-                                                            )
-                                                            .when(
-                                                                self.subtitle_bold_checkbox
-                                                                    .read(cx)
-                                                                    .is_checked(),
-                                                                |el| {
-                                                                    el.child(
-                                                                        div()
-                                                                            .text_xs()
-                                                                            .text_color(
-                                                                                OneDarkTheme::text(),
-                                                                            )
-                                                                            .child("✓"),
-                                                                    )
-                                                                },
-                                                            ),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(OneDarkTheme::text_muted())
-                                                            .child("Bold"),
-                                                    ),
+                                                Checkbox::new("subtitle-bold-checkbox")
+                                                    .label("Bold")
+                                                    .checked(subtitle_bold_enabled)
+                                                    .on_click(cx.listener(|this, checked, window, cx| {
+                                                        this.toggle_subtitle_bold(*checked, window, cx);
+                                                    })),
                                             )
                                             .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(
-                                                        div()
-                                                            .size(px(14.0))
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_center()
-                                                            .bg(
-                                                                if self
-                                                                    .subtitle_italic_checkbox
-                                                                    .read(cx)
-                                                                    .is_checked()
-                                                                {
-                                                                    OneDarkTheme::element_background()
-                                                                } else {
-                                                                    OneDarkTheme::border_transparent()
-                                                                },
-                                                            )
-                                                            .border_1()
-                                                            .border_color(OneDarkTheme::border())
-                                                            .rounded(px(2.))
-                                                            .cursor_pointer()
-                                                            .hover(|style| {
-                                                                style.bg(
-                                                                    if self
-                                                                        .subtitle_italic_checkbox
-                                                                        .read(cx)
-                                                                        .is_checked()
-                                                                    {
-                                                                        OneDarkTheme::element_background()
-                                                                    } else {
-                                                                        OneDarkTheme::element_hover()
-                                                                    },
-                                                                )
-                                                            })
-                                                            .on_mouse_down(
-                                                                MouseButton::Left,
-                                                                window.listener_for(
-                                                                    &self.subtitle_italic_checkbox,
-                                                                    |state, _, _, cx| {
-                                                                        let new_value =
-                                                                            !state.is_checked();
-                                                                        state.set_checked(
-                                                                            new_value, cx,
-                                                                        );
-                                                                    },
-                                                                ),
-                                                            )
-                                                            .when(
-                                                                self.subtitle_italic_checkbox
-                                                                    .read(cx)
-                                                                    .is_checked(),
-                                                                |el| {
-                                                                    el.child(
-                                                                        div()
-                                                                            .text_xs()
-                                                                            .text_color(
-                                                                                OneDarkTheme::text(),
-                                                                            )
-                                                                            .child("✓"),
-                                                                    )
-                                                                },
-                                                            ),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(OneDarkTheme::text_muted())
-                                                            .child("Italic"),
-                                                    ),
+                                                Checkbox::new("subtitle-italic-checkbox")
+                                                    .label("Italic")
+                                                    .checked(subtitle_italic_enabled)
+                                                    .on_click(cx.listener(|this, checked, window, cx| {
+                                                        this.toggle_subtitle_italic(*checked, window, cx);
+                                                    })),
                                             ),
                                     ),
                             )
@@ -1207,8 +1097,7 @@ impl Render for ControlsWindow {
                                     .gap_2()
                                     .child(
                                         div().flex_1().child(
-                                            Select::new(&self.subtitle_font_select)
-                                                .direction(DropdownDirection::Up),
+                                            Select::new(&self.subtitle_font_select),
                                         ),
                                     )
                                     .child(
@@ -1222,7 +1111,7 @@ impl Render for ControlsWindow {
                                                         "Size: {:.0}",
                                                         self.subtitle_font_size_slider
                                                             .read(cx)
-                                                            .get_value()
+                                                            .value()
                                                             .end()
                                                     ),
                                             ))
@@ -1230,8 +1119,8 @@ impl Render for ControlsWindow {
                                             .pt_neg_1(), //this moves the "size: x" and slider below it up ever so slightly to be even with the font dropdown
                                     ),
                             )
-                            .pb_neg_1(),
-                    ),
+                            .pb_neg_1()
+                    }),
             )
     }
 }
