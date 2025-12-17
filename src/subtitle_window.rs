@@ -1,14 +1,20 @@
-use crate::theme::OneDarkTheme;
-use crate::virtual_list::{v_virtual_list, VirtualListScrollHandle};
+use crate::theme::OneDarkExt;
 use gpui::{
-    div, prelude::*, px, size, Context, Entity, IntoElement, MouseButton, Pixels, Point, Render,
+    div, prelude::*, px, size, Context, Entity, IntoElement, MouseButton, Pixels, Render,
     ScrollStrategy, Size, Window,
 };
+use gpui_component::ActiveTheme;
+use gpui_component::{v_virtual_list, VirtualListScrollHandle};
 use std::rc::Rc;
 
-use crate::checkbox::{Checkbox, CheckboxEvent, CheckboxState};
-use crate::input::InputState;
-use crate::select::{Select, SelectEvent, SelectItem, SelectState};
+use gpui_component::{
+    checkbox::Checkbox,
+    input::{Input, InputState},
+    menu::{ContextMenuExt, PopupMenuItem},
+    select::{Select, SelectEvent, SelectItem, SelectState},
+    IndexPath,
+};
+
 use crate::subtitle_clip_tab::SubtitleClipTab;
 use crate::subtitle_detector::SubtitleStream;
 use crate::subtitle_extractor::SubtitleEntry;
@@ -24,17 +30,23 @@ pub enum SubtitleTab {
 
 // Implement SelectItem for SubtitleStream
 impl SelectItem for SubtitleStream {
-    fn display_title(&self) -> String {
-        self.display_title.clone()
+    type Value = Self;
+
+    fn title(&self) -> gpui::SharedString {
+        self.display_title.clone().into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
     }
 }
 
 /// Subtitle window with stream selection and SRT display
 pub struct SubtitleWindow {
-    select_state: Entity<SelectState<SubtitleStream>>,
-    sync_subtitles_to_video: Entity<CheckboxState>,
+    select_state: Entity<SelectState<Vec<SubtitleStream>>>,
+    sync_enabled: bool, // Whether subtitles are synced to video
     search_input: Entity<InputState>,
-    subtitle_entries: Vec<SubtitleEntry>,
+    pub subtitle_entries: Vec<SubtitleEntry>,
     current_position: f32,                 // Current video position in seconds
     current_subtitle_index: Option<usize>, // Index of the currently active subtitle (from video position)
     scroll_handle: VirtualListScrollHandle,
@@ -43,28 +55,13 @@ pub struct SubtitleWindow {
     last_scrolled_to_search: Option<usize>, // Last search result we scrolled to (to avoid re-scrolling)
     last_scrolled_to_video: Option<usize>,  // Last video position we scrolled to
     last_submitted_search_term: Option<String>, // Last search term submitted via Enter (to distinguish NEW vs SAME searches)
-    pub context_menu: Option<ContextMenuState>, // Right-click context menu state (public so unified window can close it)
-    active_tab: SubtitleTab,               // Currently active tab
-    clip_tab: Entity<SubtitleClipTab>,     // Clip tab component
+    active_tab: SubtitleTab,                    // Currently active tab
+    clip_tab: Entity<SubtitleClipTab>,          // Clip tab component
     controls: Option<Entity<crate::controls_window::ControlsWindow>>, // Reference to controls window to check clip state
 }
 
-/// Type of context menu to display
-#[derive(Clone, Copy, PartialEq)]
-pub enum ContextMenuType {
-    SubtitleEntry, // Right-click on subtitle entry
-    StartTime,     // Right-click on start timestamp
-    EndTime,       // Right-click on end timestamp
-}
-
-/// State for the right-click context menu
-pub struct ContextMenuState {
-    pub position: Point<Pixels>,
-    pub subtitle_index: usize,
-    pub menu_type: ContextMenuType,
-}
-
 // Data structure to hold loaded subtitle information
+#[derive(Clone)]
 pub struct SubtitleData {
     pub streams: Vec<SubtitleStream>,
     pub first_stream_entries: Vec<SubtitleEntry>,
@@ -105,15 +102,58 @@ impl SubtitleWindow {
     }
 
     /// Update the subtitle window with pre-loaded data (must be called on UI thread)
-    pub fn update_with_loaded_data(&mut self, data: SubtitleData, cx: &mut Context<Self>) {
-        // Update select state with streams
-        self.select_state.update(cx, |state, cx| {
-            state.set_items(data.streams.clone(), cx);
-            // Select the first stream by default
-            if !data.streams.is_empty() {
-                state.set_selected_index(Some(0), cx);
-            }
+    pub fn update_with_loaded_data(
+        &mut self,
+        window: &mut Window,
+        data: SubtitleData,
+        cx: &mut Context<Self>,
+    ) {
+        // Recreate select state with new streams
+        // This ensures the Select component properly reflects the new data
+        let new_select_state = cx.new(|cx| {
+            let selected_index = if !data.streams.is_empty() {
+                Some(IndexPath::new(0))
+            } else {
+                None
+            };
+            SelectState::new(data.streams.clone(), selected_index, window, cx)
         });
+
+        // Subscribe to select events for the new state
+        cx.subscribe(
+            &new_select_state,
+            |this, _state_entity, event: &SelectEvent<Vec<SubtitleStream>>, cx| {
+                if let SelectEvent::Confirm(Some(_selected_stream)) = event {
+                    // Get the selected index from the SelectState
+                    if let Some(index_path) = this.select_state.read(cx).selected_index(cx) {
+                        let index = index_path.row;
+                        this.load_subtitle_stream(index, cx);
+
+                        // Update AppState with the selected subtitle track
+                        cx.update_global::<AppState, _>(|state, _| {
+                            state.selected_subtitle_track = Some(index + 1);
+                        });
+
+                        // If subtitle display is enabled in controls, update the video player
+                        let (display_subtitles, video_player) = {
+                            let app_state = cx.global::<AppState>();
+                            (app_state.display_subtitles, app_state.video_player.clone())
+                        };
+
+                        if display_subtitles {
+                            if let Ok(player) = video_player.lock() {
+                                if let Err(e) = player.set_subtitle_track((index + 1) as i32) {
+                                    eprintln!("Failed to set subtitle track: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        .detach();
+
+        self.select_state = new_select_state;
 
         // Set the subtitle entries
         self.subtitle_entries = data.first_stream_entries.clone();
@@ -126,71 +166,54 @@ impl SubtitleWindow {
         cx.notify();
     }
 
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Create select state with empty items initially
-        let select_state = cx.new(|_cx| SelectState::new(Vec::new()));
+        let select_state =
+            cx.new(|cx| SelectState::new(Vec::<SubtitleStream>::new(), None, window, cx));
 
         // Subscribe to select events to load the selected subtitle stream
-        cx.subscribe(&select_state, |this, _, event: &SelectEvent, cx| {
-            let SelectEvent::Change(index) = event;
-            this.load_subtitle_stream(*index, cx);
-
-            // Update AppState with the selected subtitle track
-            cx.update_global::<AppState, _>(|state, _| {
-                state.selected_subtitle_track = Some(*index + 1);
-            });
-
-            // If subtitle display is enabled in controls, update the video player
-            let app_state = cx.global::<AppState>();
-            if app_state.display_subtitles {
-                let video_player = app_state.video_player.clone();
-
-                if let Ok(player) = video_player.lock() {
-                    if let Err(e) = player.set_subtitle_track((*index + 1) as i32) {
-                        eprintln!("Failed to set subtitle track: {}", e);
-                    }
-                } else {
-                    eprintln!("Failed to lock video player for subtitle track change");
-                };
-            }
-        })
-        .detach();
-
-        // Create checkbox state with default checked (synced to video)
-        let sync_subtitles_to_video = cx.new(|_cx| CheckboxState::new(true));
-
-        // Subscribe to checkbox events to update AppState
         cx.subscribe(
-            &sync_subtitles_to_video,
-            |this, _, event: &CheckboxEvent, cx| {
-                let CheckboxEvent::Change(checked) = event;
+            &select_state,
+            |this, _state_entity, event: &SelectEvent<Vec<SubtitleStream>>, cx| {
+                if let SelectEvent::Confirm(Some(_selected_stream)) = event {
+                    // Get the selected index from the SelectState
+                    if let Some(index_path) = this.select_state.read(cx).selected_index(cx) {
+                        let index = index_path.row;
+                        this.load_subtitle_stream(index, cx);
 
-                // Update AppState
-                cx.update_global::<AppState, _>(|state, _| {
-                    state.synced_to_video = *checked;
-                });
+                        // Update AppState with the selected subtitle track
+                        cx.update_global::<AppState, _>(|state, _| {
+                            state.selected_subtitle_track = Some(index + 1);
+                        });
 
-                // When turning ON sync to video, clear all search state
-                if *checked {
-                    this.search_result_indices.clear();
-                    this.current_search_result_index = None;
-                    this.last_submitted_search_term = None;
-                    this.last_scrolled_to_search = None;
-                    cx.notify();
+                        // If subtitle display is enabled in controls, update the video player
+                        let app_state = cx.global::<AppState>();
+                        if app_state.display_subtitles {
+                            let video_player = app_state.video_player.clone();
+
+                            if let Ok(player) = video_player.lock() {
+                                if let Err(e) = player.set_subtitle_track((index + 1) as i32) {
+                                    eprintln!("Failed to set subtitle track: {}", e);
+                                }
+                            } else {
+                                eprintln!("Failed to lock video player for subtitle track change");
+                            };
+                        }
+                    }
                 }
             },
         )
         .detach();
 
         // Create search input
-        let search_input = cx.new(|cx| InputState::new(cx));
+        let search_input = cx.new(|cx| InputState::new(window, cx));
 
         // Create clip tab component
-        let clip_tab = cx.new(|cx| SubtitleClipTab::new(cx));
+        let clip_tab = cx.new(|cx| SubtitleClipTab::new(window, cx));
 
         Self {
             select_state,
-            sync_subtitles_to_video,
+            sync_enabled: true, // Default to synced to video
             search_input,
             subtitle_entries: Vec::new(),
             current_position: 0.0,
@@ -201,15 +224,38 @@ impl SubtitleWindow {
             last_scrolled_to_search: None,
             last_scrolled_to_video: None,
             last_submitted_search_term: None,
-            context_menu: None,
             active_tab: SubtitleTab::Video, // Default to Video tab
             clip_tab,
             controls: None, // Will be set by UnifiedWindow after creation
         }
     }
 
+    /// Handle sync checkbox toggle
+    fn toggle_sync(&mut self, checked: bool, cx: &mut Context<Self>) {
+        self.sync_enabled = checked;
+
+        // Update AppState
+        cx.update_global::<AppState, _>(|state, _| {
+            state.synced_to_video = checked;
+        });
+
+        // When turning ON sync to video, clear all search state
+        if checked {
+            self.search_result_indices.clear();
+            self.current_search_result_index = None;
+            self.last_submitted_search_term = None;
+            self.last_scrolled_to_search = None;
+        }
+
+        cx.notify();
+    }
+
     /// Set the controls window reference (called by UnifiedWindow)
-    pub fn set_controls(&mut self, controls: Entity<crate::controls_window::ControlsWindow>, cx: &mut Context<Self>) {
+    pub fn set_controls(
+        &mut self,
+        controls: Entity<crate::controls_window::ControlsWindow>,
+        cx: &mut Context<Self>,
+    ) {
         self.controls = Some(controls.clone());
 
         // Also set controls on the clip tab
@@ -219,7 +265,12 @@ impl SubtitleWindow {
     }
 
     /// Load subtitle streams for the current video file
-    pub fn load_subtitle_streams(&mut self, file_path: &str, cx: &mut Context<Self>) {
+    pub fn load_subtitle_streams(
+        &mut self,
+        window: &mut Window,
+        file_path: &str,
+        cx: &mut Context<Self>,
+    ) {
         // Detect subtitle streams
         let streams = crate::subtitle_detector::detect_subtitle_streams(file_path);
 
@@ -232,10 +283,10 @@ impl SubtitleWindow {
 
         // Update select state with streams
         self.select_state.update(cx, |state, cx| {
-            state.set_items(streams.clone(), cx);
+            state.set_items(streams.clone(), window, cx);
             // Select the first stream by default
             if !streams.is_empty() {
-                state.set_selected_index(Some(0), cx);
+                state.set_selected_index(Some(IndexPath::new(0)), window, cx);
             }
         });
 
@@ -276,7 +327,7 @@ impl SubtitleWindow {
 
     /// Search for all subtitles matching the search text and find all matches
     fn update_search_results(&mut self, cx: &mut Context<Self>) {
-        let search_text = self.search_input.read(cx).content();
+        let search_text = self.search_input.read(cx).text().to_string();
 
         // Clear previous results
         self.search_result_indices.clear();
@@ -308,9 +359,7 @@ impl SubtitleWindow {
             self.current_search_result_index = Some(0);
 
             // Disable sync to video
-            self.sync_subtitles_to_video.update(cx, |state, cx| {
-                state.set_checked(false, cx);
-            });
+            self.toggle_sync(false, cx);
         }
 
         cx.notify();
@@ -339,7 +388,7 @@ impl SubtitleWindow {
 
     /// Handle Enter key in search input
     fn on_search_enter(&mut self, cx: &mut Context<Self>) {
-        let current_search_text = self.search_input.read(cx).content();
+        let current_search_text = self.search_input.read(cx).text().to_string();
 
         // If search text is empty, do nothing
         if current_search_text.is_empty() {
@@ -352,9 +401,7 @@ impl SubtitleWindow {
             self.last_submitted_search_term = Some(current_search_text.clone());
 
             // Turn OFF sync to video
-            self.sync_subtitles_to_video.update(cx, |state, cx| {
-                state.set_checked(false, cx);
-            });
+            self.toggle_sync(false, cx);
 
             // Perform search and jump to first result (index 0)
             self.update_search_results(cx);
@@ -365,10 +412,10 @@ impl SubtitleWindow {
     }
 
     /// Handle Escape key in search input
-    fn on_search_escape(&mut self, cx: &mut Context<Self>) {
+    fn on_search_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Clear search and results
         self.search_input.update(cx, |input, cx| {
-            input.clear(cx);
+            input.set_value("".to_string(), window, cx);
         });
         self.search_result_indices.clear();
         self.current_search_result_index = None;
@@ -383,11 +430,13 @@ impl SubtitleWindow {
             let controls = controls_entity.read(cx);
 
             // Inline the clip validation logic
-            let start_ms = controls.clip_start_input
+            let start_ms = controls
+                .clip_start_input
                 .read(cx)
                 .parse_time_ms()
                 .or(controls.clip_start);
-            let end_ms = controls.clip_end_input
+            let end_ms = controls
+                .clip_end_input
                 .read(cx)
                 .parse_time_ms()
                 .or(controls.clip_end);
@@ -479,10 +528,24 @@ impl Render for SubtitleWindow {
         let clip_tab_enabled = self.is_clip_tab_enabled(cx);
         let active_tab = self.active_tab;
 
+        let theme = cx.theme();
+        // Pre-capture colors for closures
+        let surface_bg = theme.surface_background();
+        let border_variant_color = theme.border_variant();
+        let element_active_bg = theme.element_active();
+        let element_bg = theme.element_background();
+        let element_hover_bg = theme.element_hover();
+        let text_color = theme.text();
+        let text_muted_color = theme.text_muted();
+        let text_disabled_color = theme.text_disabled();
+        let warning_bg = theme.warning();
+        let success_bg = theme.success();
+        let info_bg = theme.info();
+
         div()
             .flex()
             .flex_col()
-            .bg(OneDarkTheme::surface_background())
+            .bg(surface_bg)
             .size_full()
             .p_4()
             .gap_4()
@@ -494,7 +557,7 @@ impl Render for SubtitleWindow {
                     .flex_row()
                     .gap_1()
                     .border_b_1()
-                    .border_color(OneDarkTheme::border_variant())
+                    .border_color(border_variant_color)
                     .pb_2()
                     .child(
                         // Video tab
@@ -505,15 +568,15 @@ impl Render for SubtitleWindow {
                             .cursor_pointer()
                             .text_sm()
                             .when(active_tab == SubtitleTab::Video, |div| {
-                                div.bg(OneDarkTheme::element_active())
-                                    .text_color(OneDarkTheme::text())
+                                div.bg(element_active_bg)
+                                    .text_color(text_color)
                                     .border_b_2()
-                                    .border_color(OneDarkTheme::warning())
+                                    .border_color(warning_bg)
                             })
                             .when(active_tab != SubtitleTab::Video, |div| {
-                                div.bg(OneDarkTheme::element_background())
-                                    .text_color(OneDarkTheme::text_muted())
-                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                                div.bg(element_bg)
+                                    .text_color(text_muted_color)
+                                    .hover(move |style| style.bg(element_hover_bg))
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -522,7 +585,7 @@ impl Render for SubtitleWindow {
                                     cx.notify();
                                 }),
                             )
-                            .child("Video"),
+                            .child("Video")
                     )
                     .child(
                         // Clip tab
@@ -534,19 +597,19 @@ impl Render for SubtitleWindow {
                             .when(clip_tab_enabled, |div| div.cursor_pointer())
                             .when(!clip_tab_enabled, |div| div.cursor_not_allowed())
                             .when(active_tab == SubtitleTab::Clip, |div| {
-                                div.bg(OneDarkTheme::element_active())
-                                    .text_color(OneDarkTheme::text())
+                                div.bg(element_active_bg)
+                                    .text_color(text_color)
                                     .border_b_2()
-                                    .border_color(OneDarkTheme::warning())
+                                    .border_color(warning_bg)
                             })
                             .when(active_tab != SubtitleTab::Clip && clip_tab_enabled, |div| {
-                                div.bg(OneDarkTheme::element_background())
-                                    .text_color(OneDarkTheme::text_muted())
-                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                                div.bg(element_bg)
+                                    .text_color(text_muted_color)
+                                    .hover(move |style| style.bg(element_hover_bg))
                             })
                             .when(!clip_tab_enabled, |div| {
-                                div.bg(OneDarkTheme::element_background())
-                                    .text_color(OneDarkTheme::text_disabled())
+                                div.bg(element_bg)
+                                    .text_color(text_disabled_color)
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -562,6 +625,8 @@ impl Render for SubtitleWindow {
             )
             // Video tab content
             .when(active_tab == SubtitleTab::Video, |parent| {
+                let sync_enabled = self.sync_enabled;
+
                 parent.child(
                     // Controls section
                     div()
@@ -579,7 +644,12 @@ impl Render for SubtitleWindow {
                             .items_center()
                             .child(
                                 // Checkbox for syncing to video
-                                Checkbox::new(&self.sync_subtitles_to_video).label("Sync"),
+                                Checkbox::new("sync-to-video-checkbox")
+                                    .label("Sync")
+                                    .checked(sync_enabled)
+                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                        this.toggle_sync(*checked, cx);
+                                    })),
                             )
                             .child(
                                 // Select dropdown at half width
@@ -593,26 +663,27 @@ impl Render for SubtitleWindow {
                     .child(
                         div()
                             .w_full()
-                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                                 match event.keystroke.key.as_str() {
                                     "enter" => {
                                         this.on_search_enter(cx);
                                     }
                                     "escape" => {
-                                        this.on_search_escape(cx);
+                                        this.on_search_escape(window, cx);
                                     }
                                     _ => {}
                                 }
                             }))
-                            .child(self.search_input.clone()),
+                            .child(Input::new(&self.search_input)),
                     ),
             )
             .child(
                 // Virtual list for displaying subtitles
+                // Use dynamic ID so VirtualList gets recreated when data changes
                 div().id("subtitle-list-container").flex_1().w_full().child(
                     v_virtual_list(
                         view,
-                        "subtitle-list",
+                        format!("subtitle-list-{}", item_count),
                         item_sizes,
                         move |_view, range, _window, _cx| {
                             range
@@ -624,27 +695,29 @@ impl Render for SubtitleWindow {
                                     let is_active_search_result =
                                         current_search_subtitle_idx == Some(idx);
                                     let start_ms = entry.start_ms;
+                                    let end_ms = entry.end_ms;
+
                                     div()
                                         .w_full()
                                         .h(px(60.0))
                                         .px_3()
                                         .py_2()
                                         .border_b_1()
-                                        .border_color(OneDarkTheme::border_variant())
+                                        .border_color(border_variant_color)
                                         .cursor_pointer()
                                         // Prioritize active search result > current video subtitle > regular search result
                                         .when(is_active_search_result, |div| {
-                                            div.bg(OneDarkTheme::warning()) // Bright orange for active search result
+                                            div.bg(warning_bg) // Bright orange for active search result
                                         })
                                         .when(is_search_result && !is_active_search_result, |div| {
-                                            div.bg(OneDarkTheme::element_active()) // Dark brown for other search results
+                                            div.bg(element_active_bg) // Dark brown for other search results
                                         })
                                         .when(
                                             is_current_video_subtitle
                                                 && !is_active_search_result
                                                 && !is_search_result,
                                             |div| {
-                                                div.bg(OneDarkTheme::success()) // Green for current video subtitle
+                                                div.bg(success_bg) // Green for current video subtitle
                                             },
                                         )
                                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -666,67 +739,7 @@ impl Render for SubtitleWindow {
                                                     eprintln!("Failed to seek: {}", e);
                                                 }
                                             };
-                                        })
-                                        .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                                            // Show context menu on right-click
-                                            println!("Right-click detected on subtitle entry {}", idx);
-                                            let position = event.position;
-                                            println!("Mouse position (window coords): {:?}", position);
-
-                                            // Get window bounds to calculate subtitle window offset
-                                            let window_bounds = window.bounds();
-                                            let video_width = window_bounds.size.width * 0.76;
-
-                                            // Convert to subtitle-window-relative coordinates
-                                            // Subtract the video width since subtitle window starts after video
-                                            let relative_x = position.x - video_width;
-                                            let relative_y = position.y;
-
-                                            println!("Relative position (subtitle window coords): x={}, y={}", relative_x, relative_y);
-
-                                            let relative_position = Point {
-                                                x: relative_x,
-                                                y: relative_y,
-                                            };
-
-                                            // Use defer to update state after this render cycle
-                                            cx.defer(move |cx| {
-                                                println!("In deferred callback");
-                                                let app_state = cx.global::<AppState>();
-                                                let unified_window = app_state.unified_window();
-
-                                                if let Some(window_handle) = unified_window {
-                                                    println!("Got unified window handle");
-                                                    let update_result = window_handle.update(cx, |any_view, _, app_cx| {
-                                                        println!("Inside window.update, attempting downcast");
-                                                        match any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                            Ok(unified_window) => {
-                                                                println!("Successfully downcast to UnifiedWindow");
-                                                                let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
-                                                                subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                                    println!("Setting context menu state with relative position");
-                                                                    subtitles.context_menu = Some(ContextMenuState {
-                                                                        position: relative_position,
-                                                                        subtitle_index: idx,
-                                                                        menu_type: ContextMenuType::SubtitleEntry,
-                                                                    });
-                                                                    cx.notify();
-                                                                    println!("Context menu state set and notified");
-                                                                });
-                                                            }
-                                                            Err(e) => {
-                                                                println!("Failed to downcast to UnifiedWindow: {:?}", e);
-                                                            }
-                                                        }
-                                                    });
-                                                    if let Err(e) = update_result {
-                                                        println!("Failed to update window handle: {:?}", e);
-                                                    }
-                                                } else {
-                                                    println!("No unified window handle available");
-                                                }
-                                            });
-                                        })
+                                        } )
                                         .child(
                                             div()
                                                 .flex()
@@ -738,55 +751,64 @@ impl Render for SubtitleWindow {
                                                         .flex_row()
                                                         .gap_1()
                                                         .text_xs()
-                                                        .text_color(OneDarkTheme::text_muted())
+                                                        .text_color(text_muted_color)
                                                         .child(
                                                             div()
                                                                 .px_1()
                                                                 .rounded(px(3.0))
                                                                 .cursor_pointer()
-                                                                .hover(|style| {
-                                                                    style
-                                                                        .bg(OneDarkTheme::info())
+                                                                .hover(move |style| {
+                                                                    style.bg(info_bg)
                                                                 })
-                                                                .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                                                                    // Show context menu for start time
-                                                                    println!("Right-click detected on start timestamp {}", idx);
-                                                                    let position = event.position;
+                                                                .context_menu(move |menu, _window, _cx| {
+                                                                    // Right-click menu for start timestamp
+                                                                    eprintln!("Building start timestamp context menu");
+                                                                    menu.item(
+                                                                        PopupMenuItem::new("Set clip start").on_click(move |_, _, cx| {
+                                                                            eprintln!("=== SET CLIP START CLICKED! time_ms={} ===", start_ms);
+                                                                            let app_state = cx.global::<AppState>();
+                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
 
-                                                                    // Get window bounds to calculate subtitle window offset
-                                                                    let window_bounds = window.bounds();
-                                                                    let video_width = window_bounds.size.width * 0.76;
-
-                                                                    // Convert to subtitle-window-relative coordinates
-                                                                    let relative_x = position.x - video_width;
-                                                                    let relative_y = position.y;
-
-                                                                    let relative_position = Point {
-                                                                        x: relative_x,
-                                                                        y: relative_y,
-                                                                    };
-
-                                                                    cx.defer(move |cx| {
-                                                                        let app_state = cx.global::<AppState>();
-                                                                        let unified_window = app_state.unified_window();
-
-                                                                        if let Some(window_handle) = unified_window {
-                                                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
-                                                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
-                                                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                                                        subtitles.context_menu = Some(ContextMenuState {
-                                                                                            position: relative_position,
-                                                                                            subtitle_index: idx,
-                                                                                            menu_type: ContextMenuType::StartTime,
-                                                                                        });
-                                                                                        cx.notify();
+                                                                            if let Some(unified_window_entity) = unified_window_entity {
+                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
+                                                                                    let controls_entity = unified_window.controls.clone();
+                                                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                                                        controls.set_clip_start(start_ms, cx);
                                                                                     });
-                                                                                }
-                                                                            });
-                                                                        }
-                                                                    });
-                                                                    cx.stop_propagation();
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                    ).item(
+                                                                        PopupMenuItem::new("Set clip end").on_click(move |_, _, cx| {
+                                                                            eprintln!("=== SET CLIP END CLICKED! time_ms={} ===", start_ms);
+                                                                            let app_state = cx.global::<AppState>();
+                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
+
+                                                                            if let Some(unified_window_entity) = unified_window_entity {
+                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
+                                                                                    let controls_entity = unified_window.controls.clone();
+                                                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                                                        controls.set_clip_end(start_ms, cx);
+                                                                                    });
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                    ).item(
+                                                                        PopupMenuItem::new("Clip block").on_click(move |_, _, cx| {
+                                                                            eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
+                                                                            let app_state = cx.global::<AppState>();
+                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
+
+                                                                            if let Some(unified_window_entity) = unified_window_entity {
+                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
+                                                                                    let controls_entity = unified_window.controls.clone();
+                                                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                                                        controls.set_clip_times(start_ms, end_ms, cx);
+                                                                                    });
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                    )
                                                                 })
                                                                 .child(entry.format_start_time())
                                                         )
@@ -796,57 +818,94 @@ impl Render for SubtitleWindow {
                                                                 .px_1()
                                                                 .rounded(px(3.0))
                                                                 .cursor_pointer()
-                                                                .hover(|style| {
-                                                                    style
-                                                                        .bg(OneDarkTheme::info())
+                                                                .hover(move |style| {
+                                                                    style.bg(info_bg)
                                                                 })
-                                                                .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                                                                    // Show context menu for end time
-                                                                    println!("Right-click detected on end timestamp {}", idx);
-                                                                    let position = event.position;
+                                                                .context_menu(move |menu, _window, _cx| {
+                                                                    // Right-click menu for end timestamp
+                                                                    eprintln!("Building end timestamp context menu");
+                                                                    menu.item(
+                                                                        PopupMenuItem::new("Set clip start").on_click(move |_, _, cx| {
+                                                                            eprintln!("=== SET CLIP START CLICKED! time_ms={} ===", end_ms);
+                                                                            let app_state = cx.global::<AppState>();
+                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
 
-                                                                    // Get window bounds to calculate subtitle window offset
-                                                                    let window_bounds = window.bounds();
-                                                                    let video_width = window_bounds.size.width * 0.76;
-
-                                                                    // Convert to subtitle-window-relative coordinates
-                                                                    let relative_x = position.x - video_width;
-                                                                    let relative_y = position.y;
-
-                                                                    let relative_position = Point {
-                                                                        x: relative_x,
-                                                                        y: relative_y,
-                                                                    };
-
-                                                                    cx.defer(move |cx| {
-                                                                        let app_state = cx.global::<AppState>();
-                                                                        let unified_window = app_state.unified_window();
-
-                                                                        if let Some(window_handle) = unified_window {
-                                                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
-                                                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
-                                                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                                                        subtitles.context_menu = Some(ContextMenuState {
-                                                                                            position: relative_position,
-                                                                                            subtitle_index: idx,
-                                                                                            menu_type: ContextMenuType::EndTime,
-                                                                                        });
-                                                                                        cx.notify();
+                                                                            if let Some(unified_window_entity) = unified_window_entity {
+                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
+                                                                                    let controls_entity = unified_window.controls.clone();
+                                                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                                                        controls.set_clip_start(end_ms, cx);
                                                                                     });
-                                                                                }
-                                                                            });
-                                                                        }
-                                                                    });
-                                                                    cx.stop_propagation();
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                    ).item(
+                                                                        PopupMenuItem::new("Set clip end").on_click(move |_, _, cx| {
+                                                                            eprintln!("=== SET CLIP END CLICKED! time_ms={} ===", end_ms);
+                                                                            let app_state = cx.global::<AppState>();
+                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
+
+                                                                            if let Some(unified_window_entity) = unified_window_entity {
+                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
+                                                                                    let controls_entity = unified_window.controls.clone();
+                                                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                                                        controls.set_clip_end(end_ms, cx);
+                                                                                    });
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                    ).item(
+                                                                        PopupMenuItem::new("Clip block").on_click(move |_, _, cx| {
+                                                                            eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
+                                                                            let app_state = cx.global::<AppState>();
+                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
+
+                                                                            if let Some(unified_window_entity) = unified_window_entity {
+                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
+                                                                                    let controls_entity = unified_window.controls.clone();
+                                                                                    controls_entity.update(app_cx, |controls, cx| {
+                                                                                        controls.set_clip_times(start_ms, end_ms, cx);
+                                                                                    });
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                    )
                                                                 })
                                                                 .child(entry.format_end_time())
+
+
                                                         )
                                                 )
                                                 .child(
                                                     div()
                                                         .text_sm()
-                                                        .text_color(OneDarkTheme::text())
+                                                        .text_color(text_color)
+                                                        .context_menu(move |menu, _window, _cx| {
+                                                            // Right-click menu for subtitle text - show "Clip block" option
+                                                            eprintln!("Building subtitle text context menu");
+                                                            menu.item(
+                                                                PopupMenuItem::new("Clip block").on_click(move |event, _, cx| {
+                                                                    eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
+                                                                    eprintln!("Event: {:?}", event);
+                                                                    let app_state = cx.global::<AppState>();
+                                                                    eprintln!("Got app_state");
+                                                                    let unified_window_entity = app_state.unified_window_entity.clone();
+                                                                    eprintln!("Got unified_window_entity: {:?}", unified_window_entity.is_some());
+
+                                                                    if let Some(unified_window_entity) = unified_window_entity {
+                                                                        eprintln!("Updating unified window...");
+                                                                        unified_window_entity.update(cx, |unified_window, app_cx| {
+                                                                            let controls_entity = unified_window.controls.clone();
+                                                                            controls_entity.update(app_cx, |controls, cx| {
+                                                                                eprintln!("Calling set_clip_times({}, {})", start_ms, end_ms);
+                                                                                controls.set_clip_times(start_ms, end_ms, cx);
+                                                                            });
+                                                                        });
+                                                                        eprintln!("=== DONE ===");
+                                                                    }
+                                                                })
+                                                            )
+                                                        })
                                                         .child(entry.text.clone()),
                                                 ),
                                         )
@@ -864,231 +923,6 @@ impl Render for SubtitleWindow {
             // Clip tab content
             .when(active_tab == SubtitleTab::Clip, |parent| {
                 parent.child(self.clip_tab.clone())
-            })
-            // Render context menu if active
-            .children(self.context_menu.as_ref().map(|menu_state| {
-                let subtitle_index = menu_state.subtitle_index;
-                let entry = &self.subtitle_entries[subtitle_index];
-                let start_ms = entry.start_ms;
-                let end_ms = entry.end_ms;
-                let menu_type = menu_state.menu_type;
-
-                let mut menu = div()
-                    .absolute()
-                    .left(menu_state.position.x)
-                    .top(menu_state.position.y)
-                    .bg(OneDarkTheme::element_background())
-                    .border_1()
-                    .border_color(OneDarkTheme::element_hover())
-                    .rounded_md()
-                    .shadow_lg()
-                    .min_w(px(140.0))
-                    // Capture mouse events to prevent them from bubbling to parent
-                    .on_mouse_down(MouseButton::Left, |_, _, _| {
-                        println!("Context menu div clicked (event consumed)");
-                        // Consume the event - don't close the menu
-                    })
-                    .on_mouse_down(MouseButton::Right, |_, _, _| {
-                        println!("Context menu div right-clicked (event consumed)");
-                        // Consume the event
-                    });
-
-                // Add menu items based on menu type
-                match menu_type {
-                    ContextMenuType::StartTime | ContextMenuType::EndTime => {
-                        // For timestamps: show all three options
-                        // Determine which timestamp was clicked to use the correct value
-                        let clicked_time_ms = match menu_type {
-                            ContextMenuType::StartTime => start_ms,
-                            ContextMenuType::EndTime => end_ms,
-                            _ => start_ms, // unreachable
-                        };
-
-                        // Add "Set clip start" option - uses the clicked timestamp
-                        menu = menu.child(
-                            div()
-                                .px_4()
-                                .py_2()
-                                .cursor_pointer()
-                                .text_sm()
-                                .text_color(OneDarkTheme::text())
-                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
-                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
-                                    cx.stop_propagation();
-                                    println!("Set clip start clicked! time_ms={}", clicked_time_ms);
-
-                                    cx.defer(move |cx| {
-                                        let app_state = cx.global::<AppState>();
-                                        let unified_window = app_state.unified_window();
-
-                                        if let Some(window_handle) = unified_window {
-                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
-                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
-                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                        controls.set_clip_start(clicked_time_ms, cx);
-                                                    });
-
-                                                    // Close the context menu
-                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
-                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                        subtitles.context_menu = None;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    });
-                                })
-                                .child("Set clip start")
-                        );
-
-                        // Add "Set clip end" option - uses the clicked timestamp
-                        menu = menu.child(
-                            div()
-                                .px_4()
-                                .py_2()
-                                .cursor_pointer()
-                                .text_sm()
-                                .text_color(OneDarkTheme::text())
-                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
-                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
-                                    cx.stop_propagation();
-                                    println!("Set clip end clicked! time_ms={}", clicked_time_ms);
-
-                                    cx.defer(move |cx| {
-                                        let app_state = cx.global::<AppState>();
-                                        let unified_window = app_state.unified_window();
-
-                                        if let Some(window_handle) = unified_window {
-                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
-                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
-                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                        controls.set_clip_end(clicked_time_ms, cx);
-                                                    });
-
-                                                    // Close the context menu
-                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
-                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                        subtitles.context_menu = None;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    });
-                                })
-                                .child("Set clip end")
-                        );
-
-                        // Add "Clip block" option
-                        menu = menu.child(
-                            div()
-                                .px_4()
-                                .py_2()
-                                .cursor_pointer()
-                                .text_sm()
-                                .text_color(OneDarkTheme::text())
-                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
-                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
-                                    cx.stop_propagation();
-                                    println!("Clip block clicked! start_ms={}, end_ms={}", start_ms, end_ms);
-
-                                    cx.defer(move |cx| {
-                                        let app_state = cx.global::<AppState>();
-                                        let unified_window = app_state.unified_window();
-
-                                        if let Some(window_handle) = unified_window {
-                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
-                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
-                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                        controls.set_clip_times(start_ms, end_ms, cx);
-                                                    });
-
-                                                    // Close the context menu
-                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
-                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                        subtitles.context_menu = None;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    });
-                                })
-                                .child("Clip block")
-                        );
-                    }
-                    ContextMenuType::SubtitleEntry => {
-                        // For subtitle entry (non-timestamp): show only "Clip block"
-                        menu = menu.child(
-                            div()
-                                .px_4()
-                                .py_2()
-                                .cursor_pointer()
-                                .text_sm()
-                                .text_color(OneDarkTheme::text())
-                                .hover(|style| style.bg(OneDarkTheme::element_hover()))
-                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_event, _, cx| {
-                                    cx.stop_propagation();
-                                    println!("Clip block clicked! start_ms={}, end_ms={}", start_ms, end_ms);
-
-                                    cx.defer(move |cx| {
-                                        let app_state = cx.global::<AppState>();
-                                        let unified_window = app_state.unified_window();
-
-                                        if let Some(window_handle) = unified_window {
-                                            let _ = window_handle.update(cx, |any_view, _, app_cx| {
-                                                if let Ok(unified_window) = any_view.downcast::<crate::unified_window::UnifiedWindow>() {
-                                                    let controls_entity = unified_window.read(app_cx).controls.clone();
-                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                        controls.set_clip_times(start_ms, end_ms, cx);
-                                                    });
-
-                                                    // Close the context menu
-                                                    let subtitles_entity = unified_window.read(app_cx).subtitles.clone();
-                                                    subtitles_entity.update(app_cx, |subtitles, cx| {
-                                                        subtitles.context_menu = None;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    });
-                                })
-                                .child("Clip block")
-                        );
-                    }
-                }
-
-                menu
-            }))
-            // Click anywhere to close context menu (except on the menu itself)
-            .when(self.context_menu.is_some(), |div| {
-                div.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                    println!("Closing context menu via background click");
-                    this.context_menu = None;
-                    cx.notify();
-                }))
-                .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| {
-                    println!("Closing context menu via right-click outside");
-                    this.context_menu = None;
-                    cx.notify();
-                }))
             })
     }
 }
