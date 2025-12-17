@@ -1,8 +1,9 @@
-use crate::theme::OneDarkTheme;
+use crate::theme::OneDarkExt;
 use gpui::{
     div, prelude::*, px, size, Context, Entity, IntoElement, MouseButton, Pixels, Render,
     ScrollStrategy, Size, Window,
 };
+use gpui_component::ActiveTheme;
 use gpui_component::{v_virtual_list, VirtualListScrollHandle};
 use std::rc::Rc;
 
@@ -527,10 +528,24 @@ impl Render for SubtitleWindow {
         let clip_tab_enabled = self.is_clip_tab_enabled(cx);
         let active_tab = self.active_tab;
 
+        let theme = cx.theme();
+        // Pre-capture colors for closures
+        let surface_bg = theme.surface_background();
+        let border_variant_color = theme.border_variant();
+        let element_active_bg = theme.element_active();
+        let element_bg = theme.element_background();
+        let element_hover_bg = theme.element_hover();
+        let text_color = theme.text();
+        let text_muted_color = theme.text_muted();
+        let text_disabled_color = theme.text_disabled();
+        let warning_bg = theme.warning();
+        let success_bg = theme.success();
+        let info_bg = theme.info();
+
         div()
             .flex()
             .flex_col()
-            .bg(OneDarkTheme::surface_background())
+            .bg(surface_bg)
             .size_full()
             .p_4()
             .gap_4()
@@ -542,7 +557,7 @@ impl Render for SubtitleWindow {
                     .flex_row()
                     .gap_1()
                     .border_b_1()
-                    .border_color(OneDarkTheme::border_variant())
+                    .border_color(border_variant_color)
                     .pb_2()
                     .child(
                         // Video tab
@@ -553,15 +568,15 @@ impl Render for SubtitleWindow {
                             .cursor_pointer()
                             .text_sm()
                             .when(active_tab == SubtitleTab::Video, |div| {
-                                div.bg(OneDarkTheme::element_active())
-                                    .text_color(OneDarkTheme::text())
+                                div.bg(element_active_bg)
+                                    .text_color(text_color)
                                     .border_b_2()
-                                    .border_color(OneDarkTheme::warning())
+                                    .border_color(warning_bg)
                             })
                             .when(active_tab != SubtitleTab::Video, |div| {
-                                div.bg(OneDarkTheme::element_background())
-                                    .text_color(OneDarkTheme::text_muted())
-                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                                div.bg(element_bg)
+                                    .text_color(text_muted_color)
+                                    .hover(move |style| style.bg(element_hover_bg))
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -582,19 +597,19 @@ impl Render for SubtitleWindow {
                             .when(clip_tab_enabled, |div| div.cursor_pointer())
                             .when(!clip_tab_enabled, |div| div.cursor_not_allowed())
                             .when(active_tab == SubtitleTab::Clip, |div| {
-                                div.bg(OneDarkTheme::element_active())
-                                    .text_color(OneDarkTheme::text())
+                                div.bg(element_active_bg)
+                                    .text_color(text_color)
                                     .border_b_2()
-                                    .border_color(OneDarkTheme::warning())
+                                    .border_color(warning_bg)
                             })
                             .when(active_tab != SubtitleTab::Clip && clip_tab_enabled, |div| {
-                                div.bg(OneDarkTheme::element_background())
-                                    .text_color(OneDarkTheme::text_muted())
-                                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                                div.bg(element_bg)
+                                    .text_color(text_muted_color)
+                                    .hover(move |style| style.bg(element_hover_bg))
                             })
                             .when(!clip_tab_enabled, |div| {
-                                div.bg(OneDarkTheme::element_background())
-                                    .text_color(OneDarkTheme::text_disabled())
+                                div.bg(element_bg)
+                                    .text_color(text_disabled_color)
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -688,21 +703,21 @@ impl Render for SubtitleWindow {
                                         .px_3()
                                         .py_2()
                                         .border_b_1()
-                                        .border_color(OneDarkTheme::border_variant())
+                                        .border_color(border_variant_color)
                                         .cursor_pointer()
                                         // Prioritize active search result > current video subtitle > regular search result
                                         .when(is_active_search_result, |div| {
-                                            div.bg(OneDarkTheme::warning()) // Bright orange for active search result
+                                            div.bg(warning_bg) // Bright orange for active search result
                                         })
                                         .when(is_search_result && !is_active_search_result, |div| {
-                                            div.bg(OneDarkTheme::element_active()) // Dark brown for other search results
+                                            div.bg(element_active_bg) // Dark brown for other search results
                                         })
                                         .when(
                                             is_current_video_subtitle
                                                 && !is_active_search_result
                                                 && !is_search_result,
                                             |div| {
-                                                div.bg(OneDarkTheme::success()) // Green for current video subtitle
+                                                div.bg(success_bg) // Green for current video subtitle
                                             },
                                         )
                                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -736,14 +751,14 @@ impl Render for SubtitleWindow {
                                                         .flex_row()
                                                         .gap_1()
                                                         .text_xs()
-                                                        .text_color(OneDarkTheme::text_muted())
+                                                        .text_color(text_muted_color)
                                                         .child(
                                                             div()
                                                                 .px_1()
                                                                 .rounded(px(3.0))
                                                                 .cursor_pointer()
-                                                                .hover(|style| {
-                                                                    style.bg(OneDarkTheme::info())
+                                                                .hover(move |style| {
+                                                                    style.bg(info_bg)
                                                                 })
                                                                 .context_menu(move |menu, _window, _cx| {
                                                                     // Right-click menu for start timestamp
@@ -803,8 +818,8 @@ impl Render for SubtitleWindow {
                                                                 .px_1()
                                                                 .rounded(px(3.0))
                                                                 .cursor_pointer()
-                                                                .hover(|style| {
-                                                                    style.bg(OneDarkTheme::info())
+                                                                .hover(move |style| {
+                                                                    style.bg(info_bg)
                                                                 })
                                                                 .context_menu(move |menu, _window, _cx| {
                                                                     // Right-click menu for end timestamp
@@ -864,7 +879,7 @@ impl Render for SubtitleWindow {
                                                 .child(
                                                     div()
                                                         .text_sm()
-                                                        .text_color(OneDarkTheme::text())
+                                                        .text_color(text_color)
                                                         .context_menu(move |menu, _window, _cx| {
                                                             // Right-click menu for subtitle text - show "Clip block" option
                                                             eprintln!("Building subtitle text context menu");

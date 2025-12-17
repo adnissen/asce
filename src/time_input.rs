@@ -1,9 +1,10 @@
-use crate::theme::OneDarkTheme;
+use crate::theme::OneDarkExt;
 use gpui::{
     actions, div, prelude::*, App, Bounds, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId,
     LayoutId, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window,
 };
+use gpui_component::ActiveTheme;
 use std::ops::Range;
 
 actions!(time_input, [Backspace]);
@@ -354,23 +355,26 @@ impl Render for TimeInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_focused = self.focus_handle.is_focused(window);
         let is_valid = self.is_valid();
+        let theme = cx.theme();
+
+        let border_color = if !is_valid {
+            theme.error()
+        } else if is_focused {
+            theme.border_focused()
+        } else {
+            theme.border()
+        };
 
         div()
             .w_full()
             .px_2()
             .py_1()
-            .bg(OneDarkTheme::element_background())
+            .bg(theme.element_background())
             .border_1()
-            .border_color(if !is_valid {
-                OneDarkTheme::error()
-            } else if is_focused {
-                OneDarkTheme::border_focused()
-            } else {
-                OneDarkTheme::border()
-            })
+            .border_color(border_color)
             .rounded_md()
             .text_xs()
-            .text_color(OneDarkTheme::text())
+            .text_color(theme.text())
             .cursor(CursorStyle::IBeam)
             .key_context("TimeInput")
             .track_focus(&self.focus_handle(cx))

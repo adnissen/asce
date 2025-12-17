@@ -1,214 +1,166 @@
-use gpui::Rgba;
+//! Theme integration with gpui-component
+//!
+//! This module loads the One Dark theme and provides helper functions
+//! for accessing theme colors throughout the application.
 
-/// Zed One Dark Theme - Color Constants
-/// Based on Zed's official One Dark theme specification
-pub struct OneDarkTheme;
+use gpui::{App, Hsla};
+use gpui_component::{Theme, ThemeSet};
+use std::rc::Rc;
 
-impl OneDarkTheme {
+/// One Dark Theme JSON embedded in the binary
+const ONE_DARK_THEME: &str = include_str!("../assets/themes/one-dark-theme.json");
+
+/// Initialize the One Dark theme as the default theme for the application.
+/// Call this after `gpui_component::init(cx)` in your main function.
+pub fn init(cx: &mut App) {
+    // Parse the One Dark theme
+    let theme_set: ThemeSet =
+        serde_json::from_str(ONE_DARK_THEME).expect("Failed to parse One Dark theme JSON");
+
+    // Get the first theme config (One Dark)
+    let one_dark_config = theme_set
+        .themes
+        .into_iter()
+        .next()
+        .expect("One Dark theme set should have at least one theme");
+
+    // Get the global theme and set our One Dark as the dark theme
+    let theme = Theme::global_mut(cx);
+    let config_rc = Rc::new(one_dark_config);
+    theme.dark_theme = config_rc.clone();
+
+    // Apply the configuration
+    theme.apply_config(&config_rc);
+}
+
+/// Helper trait extension for accessing common theme colors.
+/// This provides a more ergonomic API for the most commonly used colors.
+pub trait OneDarkExt {
+    /// Get the theme reference
+    fn theme(&self) -> &Theme;
+
     // === BACKGROUND COLORS ===
 
-    /// Main application background (#3b414d)
-    pub fn background() -> Rgba {
-        gpui::rgb(0x3b414d)
+    /// Main editor/content area background
+    fn editor_background(&self) -> Hsla {
+        self.theme().background
     }
 
-    /// Surface background for panels and panes (#2f343e)
-    pub fn surface_background() -> Rgba {
-        gpui::rgb(0x2f343e)
+    /// Surface background for panels and panes
+    fn surface_background(&self) -> Hsla {
+        self.theme().sidebar
     }
 
-    /// Elevated surface background (#2f343e)
-    pub fn elevated_surface_background() -> Rgba {
-        gpui::rgb(0x2f343e)
+    /// Elevated surface background
+    fn elevated_surface_background(&self) -> Hsla {
+        self.theme().popover
     }
 
-    /// Editor/content area background (#282c33)
-    pub fn editor_background() -> Rgba {
-        gpui::rgb(0x282c33)
+    /// UI element default background
+    fn element_background(&self) -> Hsla {
+        self.theme().secondary
     }
 
-    /// UI element default background (#2e343e)
-    pub fn element_background() -> Rgba {
-        gpui::rgb(0x2e343e)
+    /// Hovered element background
+    fn element_hover(&self) -> Hsla {
+        self.theme().accent
     }
 
-    /// Hovered element background (#363c46)
-    pub fn element_hover() -> Rgba {
-        gpui::rgb(0x363c46)
+    /// Active/pressed element background
+    fn element_active(&self) -> Hsla {
+        self.theme().secondary_active
     }
 
-    /// Active/pressed element background (#454a56)
-    pub fn element_active() -> Rgba {
-        gpui::rgb(0x454a56)
+    /// Selected element background
+    fn element_selected(&self) -> Hsla {
+        self.theme().secondary_active
     }
 
-    /// Selected element background (#454a56)
-    pub fn element_selected() -> Rgba {
-        gpui::rgb(0x454a56)
-    }
-
-    /// Disabled element background (#2e343e)
-    pub fn element_disabled() -> Rgba {
-        gpui::rgb(0x2e343e)
+    /// Disabled element background
+    fn element_disabled(&self) -> Hsla {
+        self.theme().muted
     }
 
     // === TEXT COLORS ===
 
-    /// Primary text color (#dce0e5)
-    pub fn text() -> Rgba {
-        gpui::rgb(0xdce0e5)
+    /// Primary text color
+    fn text(&self) -> Hsla {
+        self.theme().foreground
     }
 
-    /// De-emphasized/muted text (#a9afbc)
-    pub fn text_muted() -> Rgba {
-        gpui::rgb(0xa9afbc)
+    /// De-emphasized/muted text
+    fn text_muted(&self) -> Hsla {
+        self.theme().muted_foreground
     }
 
-    /// Placeholder text (#878a98)
-    pub fn text_placeholder() -> Rgba {
-        gpui::rgb(0x878a98)
+    /// Placeholder text
+    fn text_placeholder(&self) -> Hsla {
+        self.theme().muted_foreground
     }
 
-    /// Disabled text (#878a98)
-    pub fn text_disabled() -> Rgba {
-        gpui::rgb(0x878a98)
+    /// Disabled text
+    fn text_disabled(&self) -> Hsla {
+        self.theme().muted_foreground
     }
 
-    /// Accent text for links and highlights (#74ade8)
-    pub fn text_accent() -> Rgba {
-        gpui::rgb(0x74ade8)
+    /// Accent text for links and highlights
+    fn text_accent(&self) -> Hsla {
+        self.theme().link
     }
 
     // === BORDER COLORS ===
 
-    /// Standard border color (#464b57)
-    pub fn border() -> Rgba {
-        gpui::rgb(0x464b57)
+    /// Standard border color
+    fn border(&self) -> Hsla {
+        self.theme().border
     }
 
-    /// Variant border color (#363c46)
-    pub fn border_variant() -> Rgba {
-        gpui::rgb(0x363c46)
+    /// Variant/subtle border color
+    fn border_variant(&self) -> Hsla {
+        self.theme().sidebar_border
     }
 
-    /// Focused border color (#47679e)
-    pub fn border_focused() -> Rgba {
-        gpui::rgb(0x47679e)
+    /// Focused border color
+    fn border_focused(&self) -> Hsla {
+        self.theme().ring
     }
 
-    /// Selected border color (#293b5b)
-    pub fn border_selected() -> Rgba {
-        gpui::rgb(0x293b5b)
+    /// Selected border color
+    fn border_selected(&self) -> Hsla {
+        self.theme().list_active_border
     }
 
-    /// Disabled border color (#414754)
-    pub fn border_disabled() -> Rgba {
-        gpui::rgb(0x414754)
-    }
-
-    /// Transparent border
-    pub fn border_transparent() -> Rgba {
-        gpui::rgba(0x00000000)
+    /// Disabled border color
+    fn border_disabled(&self) -> Hsla {
+        self.theme().muted
     }
 
     // === SEMANTIC COLORS ===
 
-    /// Success/positive action color (#a1c181)
-    pub fn success() -> Rgba {
-        gpui::rgb(0xa1c181)
+    /// Success/positive action color
+    fn success(&self) -> Hsla {
+        self.theme().success
     }
 
-    /// Error/danger color (#d07277)
-    pub fn error() -> Rgba {
-        gpui::rgb(0xd07277)
+    /// Error/danger color
+    fn error(&self) -> Hsla {
+        self.theme().danger
     }
 
-    /// Warning color (#dec184)
-    pub fn warning() -> Rgba {
-        gpui::rgb(0xdec184)
+    /// Warning color
+    fn warning(&self) -> Hsla {
+        self.theme().warning
     }
 
-    /// Info/primary action color (#74ade8)
-    pub fn info() -> Rgba {
-        gpui::rgb(0x74ade8)
+    /// Info/primary action color
+    fn info(&self) -> Hsla {
+        self.theme().info
     }
+}
 
-    // === SYNTAX COLORS (for code/text highlighting) ===
-
-    /// Comment color (#5d636f)
-    pub fn syntax_comment() -> Rgba {
-        gpui::rgb(0x5d636f)
-    }
-
-    /// String color (#a1c181)
-    pub fn syntax_string() -> Rgba {
-        gpui::rgb(0xa1c181)
-    }
-
-    /// Number color (#bf956a)
-    pub fn syntax_number() -> Rgba {
-        gpui::rgb(0xbf956a)
-    }
-
-    /// Keyword color (#b477cf)
-    pub fn syntax_keyword() -> Rgba {
-        gpui::rgb(0xb477cf)
-    }
-
-    /// Function color (#73ade9)
-    pub fn syntax_function() -> Rgba {
-        gpui::rgb(0x73ade9)
-    }
-
-    // === ICON COLORS ===
-
-    /// Default icon color (matches primary text)
-    pub fn icon() -> Rgba {
-        Self::text()
-    }
-
-    /// Muted icon color
-    pub fn icon_muted() -> Rgba {
-        Self::text_muted()
-    }
-
-    /// Disabled icon color
-    pub fn icon_disabled() -> Rgba {
-        Self::text_disabled()
-    }
-
-    // === EDITOR SPECIFIC ===
-
-    /// Editor foreground text (#acb2be)
-    pub fn editor_foreground() -> Rgba {
-        gpui::rgb(0xacb2be)
-    }
-
-    /// Editor line number (#4e5a5f)
-    pub fn editor_line_number() -> Rgba {
-        gpui::rgb(0x4e5a5f)
-    }
-
-    /// Active line number (#d0d4da)
-    pub fn editor_active_line_number() -> Rgba {
-        gpui::rgb(0xd0d4da)
-    }
-
-    // === GHOST ELEMENT COLORS (transparent backgrounds) ===
-
-    /// Ghost element hover state
-    pub fn ghost_element_hover() -> Rgba {
-        gpui::rgb(0x363c46)
-    }
-
-    /// Ghost element active state
-    pub fn ghost_element_active() -> Rgba {
-        gpui::rgb(0x454a56)
-    }
-
-    /// Ghost element selected state
-    pub fn ghost_element_selected() -> Rgba {
-        gpui::rgb(0x454a56)
+impl OneDarkExt for Theme {
+    fn theme(&self) -> &Theme {
+        self
     }
 }
 

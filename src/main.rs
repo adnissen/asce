@@ -247,6 +247,9 @@ fn main() {
         // Initialize gpui-component (required before using any gpui-component features)
         gpui_component::init(cx);
 
+        // Initialize One Dark theme
+        theme::init(cx);
+
         // Bring the menu bar to the foreground (so you can see the menu bar)
         cx.activate(true);
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar

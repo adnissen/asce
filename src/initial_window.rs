@@ -1,5 +1,6 @@
-use crate::theme::OneDarkTheme;
+use crate::theme::OneDarkExt;
 use gpui::{div, prelude::*, Context, Entity, IntoElement, PathPromptOptions, Render, Window};
+use gpui_component::ActiveTheme;
 
 use crate::custom_titlebar::CustomTitlebar;
 use crate::ffmpeg_export;
@@ -17,11 +18,15 @@ impl InitialWindow {
 }
 
 impl Render for InitialWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        // Pre-capture colors for use in closures
+        let hover_bg = theme.element_hover();
+
         div()
             .flex()
             .flex_col()
-            .bg(OneDarkTheme::surface_background())
+            .bg(theme.surface_background())
             .size_full()
             .child(self.titlebar.clone())
             .child(
@@ -36,12 +41,12 @@ impl Render for InitialWindow {
                     .id("open-file-button")
                     .px_8()
                     .py_4()
-                    .bg(OneDarkTheme::element_background())
+                    .bg(theme.element_background())
                     .rounded_lg()
                     .cursor_pointer()
                     .text_xl()
-                    .text_color(OneDarkTheme::text())
-                    .hover(|style| style.bg(OneDarkTheme::element_hover()))
+                    .text_color(theme.text())
+                    .hover(move |style| style.bg(hover_bg))
                     .on_click(|_, _window, cx| {
                         let paths = cx.prompt_for_paths(PathPromptOptions {
                             files: true,

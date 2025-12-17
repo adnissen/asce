@@ -1,5 +1,6 @@
-use crate::theme::OneDarkTheme;
+use crate::theme::OneDarkExt;
 use gpui::{div, prelude::*, px, Context, Entity, IntoElement, MouseButton, Render, Window};
+use gpui_component::ActiveTheme;
 use std::time::Instant;
 
 use crate::font_utils;
@@ -633,10 +634,21 @@ impl Render for ControlsWindow {
             100.0
         };
 
+        let theme = cx.theme();
+        // Pre-capture colors for closures
+        let hover_bg = theme.element_hover();
+        let bg = theme.element_background();
+        let text_color = theme.text();
+        let text_muted_color = theme.text_muted();
+        let text_disabled_color = theme.text_disabled();
+        let warning_bg = theme.warning();
+        let border_variant_color = theme.border_variant();
+        let surface_bg = theme.surface_background();
+
         div()
             .flex()
             .flex_col()
-            .bg(OneDarkTheme::surface_background())
+            .bg(surface_bg)
             .size_full()
             .p_4()
             .gap_3()
@@ -654,7 +666,7 @@ impl Render for ControlsWindow {
                             .justify_between()
                             .w_full()
                             .text_sm()
-                            .text_color(OneDarkTheme::text())
+                            .text_color(text_color)
                             .child(Self::format_time(current_time))
                             .child(Self::format_time(duration)),
                     )
@@ -696,12 +708,12 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .px_2()
                                                     .py_1()
-                                                    .bg(OneDarkTheme::element_hover())
+                                                    .bg(hover_bg)
                                                     .rounded_md()
                                                     .cursor_pointer()
                                                     .text_xs()
-                                                    .text_color(OneDarkTheme::text())
-                                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
+                                                    .text_color(text_color)
+                                                    .hover(move |style| style.bg(bg))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
@@ -757,12 +769,12 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .px_2()
                                                     .py_1()
-                                                    .bg(OneDarkTheme::element_hover())
+                                                    .bg(hover_bg)
                                                     .rounded_md()
                                                     .cursor_pointer()
                                                     .text_xs()
-                                                    .text_color(OneDarkTheme::text())
-                                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
+                                                    .text_color(text_color)
+                                                    .hover(move |style| style.bg(bg))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
@@ -834,12 +846,12 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .px_2()
                                                     .py_1()
-                                                    .bg(OneDarkTheme::element_hover())
+                                                    .bg(hover_bg)
                                                     .rounded_md()
                                                     .cursor_pointer()
                                                     .text_xs()
-                                                    .text_color(OneDarkTheme::text())
-                                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
+                                                    .text_color(text_color)
+                                                    .hover(move |style| style.bg(bg))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
@@ -854,9 +866,9 @@ impl Render for ControlsWindow {
                                                 div()
                                                     .text_xs()
                                                     .text_color(if is_valid {
-                                                        OneDarkTheme::text()
+                                                        text_color
                                                     } else {
-                                                        OneDarkTheme::text_disabled()
+                                                        text_disabled_color
                                                     })
                                                     .child(format!(
                                                         "Duration: {}",
@@ -872,15 +884,15 @@ impl Render for ControlsWindow {
                                                     .rounded_md()
                                                     .text_xs()
                                                     .when(is_valid && !self.is_exporting, |this| {
-                                                        this.bg(OneDarkTheme::warning())
+                                                        this.bg(warning_bg)
                                                             .cursor_pointer()
-                                                            .text_color(OneDarkTheme::text())
-                                                            .hover(|style| style.bg(OneDarkTheme::warning()))
+                                                            .text_color(text_color)
+                                                            .hover(move |style| style.bg(warning_bg))
                                                     })
                                                     .when(!is_valid || self.is_exporting, |this| {
-                                                        this.bg(OneDarkTheme::element_background())
+                                                        this.bg(bg)
                                                             .cursor_not_allowed()
-                                                            .text_color(OneDarkTheme::text_disabled())
+                                                            .text_color(text_disabled_color)
                                                     })
                                                     .on_mouse_down(
                                                         MouseButton::Left,
@@ -931,11 +943,11 @@ impl Render for ControlsWindow {
                                 div()
                                     .px_6()
                                     .py_3()
-                                    .bg(OneDarkTheme::element_hover())
+                                    .bg(hover_bg)
                                     .rounded_md()
                                     .cursor_pointer()
-                                    .text_color(OneDarkTheme::text())
-                                    .hover(|style| style.bg(OneDarkTheme::element_background()))
+                                    .text_color(text_color)
+                                    .hover(move |style| style.bg(bg))
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _, _, cx| {
@@ -976,15 +988,15 @@ impl Render for ControlsWindow {
                                     .py_3()
                                     .rounded_md()
                                     .when(is_valid, |this| {
-                                        this.bg(OneDarkTheme::element_hover())
+                                        this.bg(hover_bg)
                                             .cursor_pointer()
-                                            .text_color(OneDarkTheme::text())
-                                            .hover(|style| style.bg(OneDarkTheme::element_background()))
+                                            .text_color(text_color)
+                                            .hover(move |style| style.bg(bg))
                                     })
                                     .when(!is_valid, |this| {
-                                        this.bg(OneDarkTheme::element_background())
+                                        this.bg(bg)
                                             .cursor_not_allowed()
-                                            .text_color(OneDarkTheme::text_disabled())
+                                            .text_color(text_disabled_color)
                                     })
                                     .on_mouse_down(
                                         MouseButton::Left,
@@ -1048,9 +1060,9 @@ impl Render for ControlsWindow {
                             .flex_col()
                             .gap_2()
                             .p_2()
-                            .bg(OneDarkTheme::surface_background())
+                            .bg(surface_bg)
                             .border_1()
-                            .border_color(OneDarkTheme::border_variant())
+                            .border_color(border_variant_color)
                             .rounded(px(4.))
                             .min_w(px(250.0))
                             // Top row: Display subtitles, Bold, Italic checkboxes
@@ -1106,7 +1118,7 @@ impl Render for ControlsWindow {
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            .child(div().text_xs().text_color(OneDarkTheme::text_muted()).child(
+                                            .child(div().text_xs().text_color(text_muted_color).child(
                                                 format!(
                                                         "Size: {:.0}",
                                                         self.subtitle_font_size_slider

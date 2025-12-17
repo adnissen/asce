@@ -1,8 +1,9 @@
-use crate::theme::OneDarkTheme;
+use crate::theme::OneDarkExt;
 use gpui::{
     div, prelude::FluentBuilder, px, svg, Context, IntoElement, InteractiveElement, MouseButton,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
 };
+use gpui_component::ActiveTheme;
 
 #[cfg(target_os = "windows")]
 use raw_window_handle::HasWindowHandle;
@@ -58,9 +59,17 @@ impl CustomTitlebar {
 impl Render for CustomTitlebar {
     fn render(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let theme = cx.theme();
+        // Pre-capture colors for use in closures
+        let hover_bg = theme.element_hover();
+        let active_bg = theme.element_active();
+        let error_bg = theme.error();
+        let text_muted_color = theme.text_muted();
+        let text_color = theme.text();
+
         div()
             .id("titlebar")
             .flex()
@@ -69,9 +78,9 @@ impl Render for CustomTitlebar {
             .justify_between()
             .w_full()
             .h(px(37.0)) // Standard titlebar height
-            .bg(OneDarkTheme::editor_background())
+            .bg(theme.editor_background())
             .border_b_1()
-            .border_color(OneDarkTheme::element_hover())
+            .border_color(hover_bg)
             .child(
                 // Left side: Title - this area is draggable on Windows
                 div()
@@ -99,7 +108,7 @@ impl Render for CustomTitlebar {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(OneDarkTheme::text_muted())
+                            .text_color(text_muted_color)
                             .child(self.title.clone()),
                     ),
             )
@@ -121,8 +130,8 @@ impl Render for CustomTitlebar {
                             .justify_center()
                             .size(px(30.0))
                             .rounded_sm()
-                            .hover(|style| style.bg(OneDarkTheme::element_hover()))
-                            .active(|style| style.bg(OneDarkTheme::element_active()))
+                            .hover(move |style| style.bg(hover_bg))
+                            .active(move |style| style.bg(active_bg))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.minimize_window();
                             }))
@@ -131,15 +140,15 @@ impl Render for CustomTitlebar {
                                 div()
                                     .when(cfg!(target_os = "windows"), |this| {
                                         this.text_size(px(16.0))
-                                            .text_color(OneDarkTheme::text_muted())
+                                            .text_color(text_muted_color)
                                             .child("─")
                                     })
                                     .when(!cfg!(target_os = "windows"), |this| {
-                                        this.text_color(OneDarkTheme::text_muted()).child(
+                                        this.text_color(text_muted_color).child(
                                             svg()
                                                 .path("M 0,5 H 10")
                                                 .size(px(10.0))
-                                                .text_color(OneDarkTheme::text_muted()),
+                                                .text_color(text_muted_color),
                                         )
                                     }),
                             ),
@@ -151,8 +160,8 @@ impl Render for CustomTitlebar {
                             .justify_center()
                             .size(px(30.0))
                             .rounded_sm()
-                            .hover(|style| style.bg(OneDarkTheme::element_hover()))
-                            .active(|style| style.bg(OneDarkTheme::element_active()))
+                            .hover(move |style| style.bg(hover_bg))
+                            .active(move |style| style.bg(active_bg))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.zoom_window();
                             }))
@@ -161,15 +170,15 @@ impl Render for CustomTitlebar {
                                 div()
                                     .when(cfg!(target_os = "windows"), |this| {
                                         this.text_size(px(14.0))
-                                            .text_color(OneDarkTheme::text_muted())
+                                            .text_color(text_muted_color)
                                             .child("□")
                                     })
                                     .when(!cfg!(target_os = "windows"), |this| {
-                                        this.text_color(OneDarkTheme::text_muted()).child(
+                                        this.text_color(text_muted_color).child(
                                             svg()
                                                 .path("M 0,0 H 10 V 10 H 0 Z M 0,1 H 10")
                                                 .size(px(10.0))
-                                                .text_color(OneDarkTheme::text_muted()),
+                                                .text_color(text_muted_color),
                                         )
                                     }),
                             ),
@@ -181,8 +190,8 @@ impl Render for CustomTitlebar {
                             .justify_center()
                             .size(px(30.0))
                             .rounded_sm()
-                            .hover(|style| style.bg(OneDarkTheme::error()))
-                            .active(|style| style.bg(OneDarkTheme::error()))
+                            .hover(move |style| style.bg(error_bg))
+                            .active(move |style| style.bg(error_bg))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.remove_window();
                             }))
@@ -191,15 +200,15 @@ impl Render for CustomTitlebar {
                                 div()
                                     .when(cfg!(target_os = "windows"), |this| {
                                         this.text_size(px(14.0))
-                                            .text_color(OneDarkTheme::text())
+                                            .text_color(text_color)
                                             .child("✕")
                                     })
                                     .when(!cfg!(target_os = "windows"), |this| {
-                                        this.text_color(OneDarkTheme::text()).child(
+                                        this.text_color(text_color).child(
                                             svg()
                                                 .path("M 0,0 L 10,10 M 10,0 L 0,10")
                                                 .size(px(10.0))
-                                                .text_color(OneDarkTheme::text()),
+                                                .text_color(text_color),
                                         )
                                     }),
                             ),

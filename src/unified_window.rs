@@ -1,8 +1,9 @@
-use crate::theme::OneDarkTheme;
+use crate::theme::OneDarkExt;
 use gpui::{
     canvas, div, prelude::*, px, Bounds, Context, Corners, Entity, IntoElement, Render,
     RenderImage, Size, Window,
 };
+use gpui_component::ActiveTheme;
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -231,10 +232,11 @@ impl Render for UnifiedWindow {
             height: video_section_height,
         };
 
+        let theme = cx.theme();
         div()
             .flex()
             .flex_col()
-            .bg(OneDarkTheme::editor_background())
+            .bg(theme.editor_background())
             .size_full()
             // Custom titlebar
             .child(self.titlebar.clone())
@@ -251,7 +253,7 @@ impl Render for UnifiedWindow {
                             .id("video-area")
                             .w(video_width)
                             .h(video_section_height)
-                            .bg(OneDarkTheme::editor_background())
+                            .bg(theme.editor_background())
                             .when(!has_video_loaded, |el| {
                                 // Show rotating triangle when no video is loaded
                                 let triangle = self.generate_rotating_triangle();
