@@ -540,8 +540,8 @@ impl Render for SubtitleWindow {
         let text_color = theme.text();
         let text_muted_color = theme.text_muted();
         let text_disabled_color = theme.text_disabled();
-        let warning_bg = theme.warning();
-        let success_bg = theme.success();
+        let ring_color = theme.ring(); // For active tab borders and search highlights
+        let list_active_bg = theme.list_active_background(); // For current subtitle highlight
         let info_bg = theme.info();
 
         div()
@@ -573,7 +573,7 @@ impl Render for SubtitleWindow {
                                 div.bg(element_active_bg)
                                     .text_color(text_color)
                                     .border_b_2()
-                                    .border_color(warning_bg)
+                                    .border_color(ring_color)
                             })
                             .when(active_tab != SubtitleTab::Video, |div| {
                                 div.bg(element_bg)
@@ -602,7 +602,7 @@ impl Render for SubtitleWindow {
                                 div.bg(element_active_bg)
                                     .text_color(text_color)
                                     .border_b_2()
-                                    .border_color(warning_bg)
+                                    .border_color(ring_color)
                             })
                             .when(active_tab != SubtitleTab::Clip && clip_tab_enabled, |div| {
                                 div.bg(element_bg)
@@ -774,17 +774,17 @@ impl Render for SubtitleWindow {
                                         .cursor_pointer()
                                         // Prioritize active search result > current video subtitle > regular search result
                                         .when(is_active_search_result, |div| {
-                                            div.bg(warning_bg) // Bright orange for active search result
+                                            div.bg(ring_color) // Theme ring color for active search result
                                         })
                                         .when(is_search_result && !is_active_search_result, |div| {
-                                            div.bg(element_active_bg) // Dark brown for other search results
+                                            div.bg(element_active_bg) // Secondary active for other search results
                                         })
                                         .when(
                                             is_current_video_subtitle
                                                 && !is_active_search_result
                                                 && !is_search_result,
                                             |div| {
-                                                div.bg(success_bg) // Green for current video subtitle
+                                                div.bg(list_active_bg) // Theme list active for current video subtitle
                                             },
                                         )
                                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {

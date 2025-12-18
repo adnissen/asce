@@ -641,7 +641,7 @@ impl Render for ControlsWindow {
         let text_color = theme.text();
         let text_muted_color = theme.text_muted();
         let text_disabled_color = theme.text_disabled();
-        let warning_bg = theme.warning();
+        let list_active_bg = theme.list_active_background(); // For active/highlight elements like Export button
         let border_variant_color = theme.border_variant();
         let surface_bg = theme.surface_background();
 
@@ -888,11 +888,11 @@ impl Render for ControlsWindow {
                                                     .rounded_md()
                                                     .text_xs()
                                                     .when(is_valid && !self.is_exporting, |this| {
-                                                        this.bg(warning_bg)
+                                                        this.bg(list_active_bg)
                                                             .cursor_pointer()
                                                             .text_color(text_color)
                                                             .hover(move |style| {
-                                                                style.bg(warning_bg)
+                                                                style.bg(list_active_bg)
                                                             })
                                                     })
                                                     .when(!is_valid || self.is_exporting, |this| {

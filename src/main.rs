@@ -8,6 +8,7 @@ extern crate objc;
 
 use clap::Parser;
 
+mod config;
 mod controls_window;
 mod custom_titlebar;
 mod ffmpeg_export;
@@ -25,11 +26,17 @@ mod video_player;
 mod video_player_window;
 
 use gpui::{
-    actions, px, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Entity, Global,
-    Menu, MenuItem, PathPromptOptions, SystemMenuType, WindowOptions,
+    actions, px, Action, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Entity,
+    Global, Menu, MenuItem, PathPromptOptions, SharedString, SystemMenuType, WindowOptions,
 };
+use gpui_component::Theme;
 use unified_window::UnifiedWindow;
 use video_player::ClockTime;
+
+/// Action to change the application theme
+#[derive(Action, Clone, PartialEq)]
+#[action(no_json)]
+struct SwitchTheme(SharedString);
 
 use std::sync::{Arc, Mutex};
 
@@ -247,14 +254,33 @@ fn main() {
         // Initialize gpui-component (required before using any gpui-component features)
         gpui_component::init(cx);
 
-        // Initialize One Dark theme
-        theme::init(cx);
+        // Load config and initialize theme with saved preference
+        let app_config = config::Config::load();
+        theme::init_with_theme_name(app_config.theme_name.as_deref(), cx);
 
         // Bring the menu bar to the foreground (so you can see the menu bar)
         cx.activate(true);
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
         cx.on_action(quit);
         cx.on_action(open_file);
+
+        // Register the theme change action handler
+        cx.on_action(|action: &SwitchTheme, cx| {
+            let registry = theme::ThemeRegistry::new();
+            if let Some(theme_variant) = registry.find_theme(&action.0) {
+                theme::apply_theme(&theme_variant.config, cx);
+                // Refresh all windows to apply the theme
+                cx.refresh_windows();
+
+                // Save the theme selection to config
+                let mut app_config = config::Config::load();
+                app_config.theme_name = Some(action.0.to_string());
+                let _ = app_config.save();
+
+                // Update the menu to show the new checkmark
+                set_app_menus(cx);
+            }
+        });
 
         // Bind keys for time input
         cx.bind_keys([gpui::KeyBinding::new(
@@ -453,16 +479,41 @@ impl AppState {
 impl Global for AppState {}
 
 fn set_app_menus(cx: &mut App) {
-    cx.set_menus(vec![Menu {
-        name: "set_menus".into(),
-        items: vec![
-            MenuItem::os_submenu("Services", SystemMenuType::Services),
-            MenuItem::separator(),
-            MenuItem::action("Open...", OpenFile),
-            MenuItem::separator(),
-            MenuItem::action("Quit", Quit),
-        ],
-    }]);
+    let registry = theme::ThemeRegistry::new();
+    let current_theme_name = Theme::global(cx).theme_name().to_string();
+
+    // Build theme submenu items with checkmark on current theme
+    let theme_items: Vec<MenuItem> = registry
+        .themes
+        .iter()
+        .map(|theme_variant| {
+            let is_current = theme_variant.name == current_theme_name;
+            MenuItem::action(
+                theme_variant.name.clone(),
+                SwitchTheme(theme_variant.name.clone().into()),
+            )
+            .checked(is_current)
+        })
+        .collect();
+
+    cx.set_menus(vec![
+        // Application menu
+        Menu {
+            name: "asve".into(),
+            items: vec![
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Open...", OpenFile),
+                MenuItem::separator(),
+                MenuItem::action("Quit", Quit),
+            ],
+        },
+        // Theme menu with all available themes
+        Menu {
+            name: "Theme".into(),
+            items: theme_items,
+        },
+    ]);
 }
 
 // Associate actions using the `actions!` macro (or `Action` derive macro)
