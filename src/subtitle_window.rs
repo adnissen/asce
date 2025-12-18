@@ -1,7 +1,7 @@
 use crate::theme::OneDarkExt;
 use gpui::{
     div, prelude::*, px, size, Context, Entity, IntoElement, MouseButton, Pixels, Render,
-    ScrollStrategy, Size, Window,
+    ScrollStrategy, SharedString, Size, TextRun, Window,
 };
 use gpui_component::ActiveTheme;
 use gpui_component::{v_virtual_list, VirtualListScrollHandle};
@@ -483,6 +483,39 @@ impl SubtitleWindow {
     }
 }
 
+/// Calculate the height of text accounting for line wrapping
+fn calculate_text_height(text: &str, wrap_width: Pixels, window: &mut Window) -> f32 {
+    let style = window.text_style();
+    let font_size = style.font_size.to_pixels(window.rem_size());
+    let line_height = window.line_height();
+
+    // Convert to owned String for SharedString (requires 'static lifetime)
+    let text_owned: SharedString = text.to_string().into();
+
+    let run = TextRun {
+        len: text.len(),
+        font: style.font(),
+        color: style.color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+
+    match window.text_system().shape_text(
+        text_owned,
+        font_size,
+        &[run],
+        Some(wrap_width),
+        None,
+    ) {
+        Ok(lines) => {
+            let total: Pixels = lines.iter().map(|line| line.size(line_height).height).sum();
+            f32::from(total)
+        }
+        Err(_) => f32::from(line_height) * 3.0, // Fallback
+    }
+}
+
 impl Render for SubtitleWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Update position from video player every frame
@@ -516,10 +549,26 @@ impl Render for SubtitleWindow {
         let search_result_indices = self.search_result_indices.clone();
         let current_search_subtitle_idx = self.current_search_subtitle_index();
 
-        // Calculate item sizes for virtual list (fixed height of 60px for each item)
+        // Calculate wrap width from window bounds (subtitle pane is ~24% of window)
+        let window_width = window.bounds().size.width;
+        let subtitle_pane_width = window_width * 0.24;
+        let text_wrap_width = (subtitle_pane_width - px(40.0)).max(px(100.0));
+
+        // Pre-calculate heights for each entry (needed for both item_sizes and closure)
+        let item_heights: Vec<f32> = entries
+            .iter()
+            .map(|entry| {
+                let text_height = calculate_text_height(&entry.text, text_wrap_width, window);
+                40.0 + text_height
+            })
+            .collect();
+        let item_heights = Rc::new(item_heights);
+
+        // Calculate item sizes for virtual list using measured heights
         let item_sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
-            (0..item_count)
-                .map(|_| size(px(0.0), px(60.0))) // width will be measured, height is 60px
+            item_heights
+                .iter()
+                .map(|&height| size(px(0.0), px(height)))
                 .collect(),
         );
 
@@ -748,6 +797,7 @@ impl Render for SubtitleWindow {
                 })
                 .child({
                     let view_for_list = view.clone();
+                    let item_heights_for_closure = item_heights.clone();
                     v_virtual_list(
                         view,
                         format!("subtitle-list-{}", item_count),
@@ -763,10 +813,11 @@ impl Render for SubtitleWindow {
                                         current_search_subtitle_idx == Some(idx);
                                     let start_ms = entry.start_ms;
                                     let end_ms = entry.end_ms;
+                                    let item_height = item_heights_for_closure.get(idx).copied().unwrap_or(60.0);
 
                                     div()
                                         .w_full()
-                                        .h(px(60.0))
+                                        .h(px(item_height))
                                         .px_3()
                                         .py_2()
                                         .border_b_1()
