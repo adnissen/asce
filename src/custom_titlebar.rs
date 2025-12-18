@@ -1,6 +1,6 @@
 use crate::theme::OneDarkExt;
 use gpui::{
-    div, prelude::FluentBuilder, px, svg, Context, IntoElement, InteractiveElement, MouseButton,
+    div, prelude::FluentBuilder, px, svg, Context, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
 };
 use gpui_component::ActiveTheme;
@@ -57,11 +57,7 @@ impl CustomTitlebar {
 }
 
 impl Render for CustomTitlebar {
-    fn render(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         // Pre-capture colors for use in closures
         let hover_bg = theme.element_hover();
@@ -199,9 +195,7 @@ impl Render for CustomTitlebar {
                                 // Use Unicode character on Windows, SVG on other platforms
                                 div()
                                     .when(cfg!(target_os = "windows"), |this| {
-                                        this.text_size(px(14.0))
-                                            .text_color(text_color)
-                                            .child("✕")
+                                        this.text_size(px(14.0)).text_color(text_color).child("✕")
                                     })
                                     .when(!cfg!(target_os = "windows"), |this| {
                                         this.text_color(text_color).child(

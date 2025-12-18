@@ -4,15 +4,15 @@ use gpui_component::ActiveTheme;
 use std::time::Instant;
 
 use crate::font_utils;
+use crate::time_input::TimeInput;
+use crate::video_player::ClockTime;
+use crate::AppState;
 use gpui_component::{
     checkbox::Checkbox,
     select::{Select, SelectEvent, SelectItem, SelectState},
     slider::{Slider, SliderEvent, SliderState, SliderValue},
     IndexPath,
 };
-use crate::time_input::TimeInput;
-use crate::video_player::ClockTime;
-use crate::AppState;
 
 // Wrapper for font names to implement SelectItem
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -856,11 +856,15 @@ impl Render for ControlsWindow {
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
                                                             // Cycle through formats: video -> gif -> audio -> video
-                                                            this.export_format = this.export_format.next();
+                                                            this.export_format =
+                                                                this.export_format.next();
                                                             cx.notify();
                                                         }),
                                                     )
-                                                    .child(format!("{}", self.export_format.as_str().to_uppercase())),
+                                                    .child(format!(
+                                                        "{}",
+                                                        self.export_format.as_str().to_uppercase()
+                                                    )),
                                             )
                                             .child(
                                                 div()
@@ -887,7 +891,9 @@ impl Render for ControlsWindow {
                                                         this.bg(warning_bg)
                                                             .cursor_pointer()
                                                             .text_color(text_color)
-                                                            .hover(move |style| style.bg(warning_bg))
+                                                            .hover(move |style| {
+                                                                style.bg(warning_bg)
+                                                            })
                                                     })
                                                     .when(!is_valid || self.is_exporting, |this| {
                                                         this.bg(bg)
@@ -1087,17 +1093,25 @@ impl Render for ControlsWindow {
                                                 Checkbox::new("subtitle-bold-checkbox")
                                                     .label("Bold")
                                                     .checked(subtitle_bold_enabled)
-                                                    .on_click(cx.listener(|this, checked, window, cx| {
-                                                        this.toggle_subtitle_bold(*checked, window, cx);
-                                                    })),
+                                                    .on_click(cx.listener(
+                                                        |this, checked, window, cx| {
+                                                            this.toggle_subtitle_bold(
+                                                                *checked, window, cx,
+                                                            );
+                                                        },
+                                                    )),
                                             )
                                             .child(
                                                 Checkbox::new("subtitle-italic-checkbox")
                                                     .label("Italic")
                                                     .checked(subtitle_italic_enabled)
-                                                    .on_click(cx.listener(|this, checked, window, cx| {
-                                                        this.toggle_subtitle_italic(*checked, window, cx);
-                                                    })),
+                                                    .on_click(cx.listener(
+                                                        |this, checked, window, cx| {
+                                                            this.toggle_subtitle_italic(
+                                                                *checked, window, cx,
+                                                            );
+                                                        },
+                                                    )),
                                             ),
                                     ),
                             )
@@ -1108,9 +1122,9 @@ impl Render for ControlsWindow {
                                     .items_start()
                                     .gap_2()
                                     .child(
-                                        div().flex_1().child(
-                                            Select::new(&self.subtitle_font_select),
-                                        ),
+                                        div()
+                                            .flex_1()
+                                            .child(Select::new(&self.subtitle_font_select)),
                                     )
                                     .child(
                                         div()
@@ -1118,15 +1132,17 @@ impl Render for ControlsWindow {
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            .child(div().text_xs().text_color(text_muted_color).child(
-                                                format!(
+                                            .child(
+                                                div().text_xs().text_color(text_muted_color).child(
+                                                    format!(
                                                         "Size: {:.0}",
                                                         self.subtitle_font_size_slider
                                                             .read(cx)
                                                             .value()
                                                             .end()
                                                     ),
-                                            ))
+                                                ),
+                                            )
                                             .child(Slider::new(&self.subtitle_font_size_slider))
                                             .pt_neg_1(), //this moves the "size: x" and slider below it up ever so slightly to be even with the font dropdown
                                     ),

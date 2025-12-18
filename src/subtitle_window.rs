@@ -58,6 +58,7 @@ pub struct SubtitleWindow {
     active_tab: SubtitleTab,                    // Currently active tab
     clip_tab: Entity<SubtitleClipTab>,          // Clip tab component
     controls: Option<Entity<crate::controls_window::ControlsWindow>>, // Reference to controls window to check clip state
+    right_clicked_item: Option<usize>, // Index of the right-clicked subtitle item
 }
 
 // Data structure to hold loaded subtitle information
@@ -227,6 +228,7 @@ impl SubtitleWindow {
             active_tab: SubtitleTab::Video, // Default to Video tab
             clip_tab,
             controls: None, // Will be set by UnifiedWindow after creation
+            right_clicked_item: None,
         }
     }
 
@@ -680,7 +682,72 @@ impl Render for SubtitleWindow {
             .child(
                 // Virtual list for displaying subtitles
                 // Use dynamic ID so VirtualList gets recreated when data changes
-                div().id("subtitle-list-container").flex_1().w_full().child(
+                div().id("subtitle-list-container").flex_1().w_full()
+                .context_menu({
+                    let view_for_menu = view.clone();
+                    move |menu, _window, cx| {
+                        // Context menu for the right-clicked subtitle item
+                        // Get the right-clicked item info
+                        let menu_data = view_for_menu.read(cx).right_clicked_item.and_then(|idx| {
+                            view_for_menu.read(cx).subtitle_entries.get(idx).map(|entry| {
+                                (entry.start_ms, entry.end_ms)
+                            })
+                        });
+
+                        if let Some((start_ms, end_ms)) = menu_data {
+                            menu.item(
+                                PopupMenuItem::new("Set clip start").on_click(move |_, _, cx| {
+                                    eprintln!("=== SET CLIP START CLICKED! time_ms={} ===", start_ms);
+                                    let app_state = cx.global::<AppState>();
+                                    let unified_window_entity = app_state.unified_window_entity.clone();
+
+                                    if let Some(unified_window_entity) = unified_window_entity {
+                                        unified_window_entity.update(cx, |unified_window, app_cx| {
+                                            let controls_entity = unified_window.controls.clone();
+                                            controls_entity.update(app_cx, |controls, cx| {
+                                                controls.set_clip_start(start_ms, cx);
+                                            });
+                                        });
+                                    }
+                                })
+                            ).item(
+                                PopupMenuItem::new("Set clip end").on_click(move |_, _, cx| {
+                                    eprintln!("=== SET CLIP END CLICKED! time_ms={} ===", end_ms);
+                                    let app_state = cx.global::<AppState>();
+                                    let unified_window_entity = app_state.unified_window_entity.clone();
+
+                                    if let Some(unified_window_entity) = unified_window_entity {
+                                        unified_window_entity.update(cx, |unified_window, app_cx| {
+                                            let controls_entity = unified_window.controls.clone();
+                                            controls_entity.update(app_cx, |controls, cx| {
+                                                controls.set_clip_end(end_ms, cx);
+                                            });
+                                        });
+                                    }
+                                })
+                            ).item(
+                                PopupMenuItem::new("Clip block").on_click(move |_, _, cx| {
+                                    eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
+                                    let app_state = cx.global::<AppState>();
+                                    let unified_window_entity = app_state.unified_window_entity.clone();
+
+                                    if let Some(unified_window_entity) = unified_window_entity {
+                                        unified_window_entity.update(cx, |unified_window, app_cx| {
+                                            let controls_entity = unified_window.controls.clone();
+                                            controls_entity.update(app_cx, |controls, cx| {
+                                                controls.set_clip_times(start_ms, end_ms, cx);
+                                            });
+                                        });
+                                    }
+                                })
+                            )
+                        } else {
+                            menu
+                        }
+                    }
+                })
+                .child({
+                    let view_for_list = view.clone();
                     v_virtual_list(
                         view,
                         format!("subtitle-list-{}", item_count),
@@ -740,6 +807,16 @@ impl Render for SubtitleWindow {
                                                 }
                                             };
                                         } )
+                                        .on_mouse_down(MouseButton::Right, {
+                                            let view_clone = view_for_list.clone();
+                                            move |_, _, cx| {
+                                                // Track which item was right-clicked
+                                                view_clone.update(cx, |this, cx| {
+                                                    this.right_clicked_item = Some(idx);
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
                                         .child(
                                             div()
                                                 .flex()
@@ -756,60 +833,7 @@ impl Render for SubtitleWindow {
                                                             div()
                                                                 .px_1()
                                                                 .rounded(px(3.0))
-                                                                .cursor_pointer()
-                                                                .hover(move |style| {
-                                                                    style.bg(info_bg)
-                                                                })
-                                                                .context_menu(move |menu, _window, _cx| {
-                                                                    // Right-click menu for start timestamp
-                                                                    eprintln!("Building start timestamp context menu");
-                                                                    menu.item(
-                                                                        PopupMenuItem::new("Set clip start").on_click(move |_, _, cx| {
-                                                                            eprintln!("=== SET CLIP START CLICKED! time_ms={} ===", start_ms);
-                                                                            let app_state = cx.global::<AppState>();
-                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
-
-                                                                            if let Some(unified_window_entity) = unified_window_entity {
-                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
-                                                                                    let controls_entity = unified_window.controls.clone();
-                                                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                                                        controls.set_clip_start(start_ms, cx);
-                                                                                    });
-                                                                                });
-                                                                            }
-                                                                        })
-                                                                    ).item(
-                                                                        PopupMenuItem::new("Set clip end").on_click(move |_, _, cx| {
-                                                                            eprintln!("=== SET CLIP END CLICKED! time_ms={} ===", start_ms);
-                                                                            let app_state = cx.global::<AppState>();
-                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
-
-                                                                            if let Some(unified_window_entity) = unified_window_entity {
-                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
-                                                                                    let controls_entity = unified_window.controls.clone();
-                                                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                                                        controls.set_clip_end(start_ms, cx);
-                                                                                    });
-                                                                                });
-                                                                            }
-                                                                        })
-                                                                    ).item(
-                                                                        PopupMenuItem::new("Clip block").on_click(move |_, _, cx| {
-                                                                            eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
-                                                                            let app_state = cx.global::<AppState>();
-                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
-
-                                                                            if let Some(unified_window_entity) = unified_window_entity {
-                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
-                                                                                    let controls_entity = unified_window.controls.clone();
-                                                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                                                        controls.set_clip_times(start_ms, end_ms, cx);
-                                                                                    });
-                                                                                });
-                                                                            }
-                                                                        })
-                                                                    )
-                                                                })
+                                                                .text_color(text_muted_color)
                                                                 .child(entry.format_start_time())
                                                         )
                                                         .child(" --> ")
@@ -817,95 +841,14 @@ impl Render for SubtitleWindow {
                                                             div()
                                                                 .px_1()
                                                                 .rounded(px(3.0))
-                                                                .cursor_pointer()
-                                                                .hover(move |style| {
-                                                                    style.bg(info_bg)
-                                                                })
-                                                                .context_menu(move |menu, _window, _cx| {
-                                                                    // Right-click menu for end timestamp
-                                                                    eprintln!("Building end timestamp context menu");
-                                                                    menu.item(
-                                                                        PopupMenuItem::new("Set clip start").on_click(move |_, _, cx| {
-                                                                            eprintln!("=== SET CLIP START CLICKED! time_ms={} ===", end_ms);
-                                                                            let app_state = cx.global::<AppState>();
-                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
-
-                                                                            if let Some(unified_window_entity) = unified_window_entity {
-                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
-                                                                                    let controls_entity = unified_window.controls.clone();
-                                                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                                                        controls.set_clip_start(end_ms, cx);
-                                                                                    });
-                                                                                });
-                                                                            }
-                                                                        })
-                                                                    ).item(
-                                                                        PopupMenuItem::new("Set clip end").on_click(move |_, _, cx| {
-                                                                            eprintln!("=== SET CLIP END CLICKED! time_ms={} ===", end_ms);
-                                                                            let app_state = cx.global::<AppState>();
-                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
-
-                                                                            if let Some(unified_window_entity) = unified_window_entity {
-                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
-                                                                                    let controls_entity = unified_window.controls.clone();
-                                                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                                                        controls.set_clip_end(end_ms, cx);
-                                                                                    });
-                                                                                });
-                                                                            }
-                                                                        })
-                                                                    ).item(
-                                                                        PopupMenuItem::new("Clip block").on_click(move |_, _, cx| {
-                                                                            eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
-                                                                            let app_state = cx.global::<AppState>();
-                                                                            let unified_window_entity = app_state.unified_window_entity.clone();
-
-                                                                            if let Some(unified_window_entity) = unified_window_entity {
-                                                                                unified_window_entity.update(cx, |unified_window, app_cx| {
-                                                                                    let controls_entity = unified_window.controls.clone();
-                                                                                    controls_entity.update(app_cx, |controls, cx| {
-                                                                                        controls.set_clip_times(start_ms, end_ms, cx);
-                                                                                    });
-                                                                                });
-                                                                            }
-                                                                        })
-                                                                    )
-                                                                })
+                                                                .text_color(text_muted_color)
                                                                 .child(entry.format_end_time())
-
-
                                                         )
                                                 )
                                                 .child(
                                                     div()
                                                         .text_sm()
                                                         .text_color(text_color)
-                                                        .context_menu(move |menu, _window, _cx| {
-                                                            // Right-click menu for subtitle text - show "Clip block" option
-                                                            eprintln!("Building subtitle text context menu");
-                                                            menu.item(
-                                                                PopupMenuItem::new("Clip block").on_click(move |event, _, cx| {
-                                                                    eprintln!("=== CLIP BLOCK CLICKED! start_ms={}, end_ms={} ===", start_ms, end_ms);
-                                                                    eprintln!("Event: {:?}", event);
-                                                                    let app_state = cx.global::<AppState>();
-                                                                    eprintln!("Got app_state");
-                                                                    let unified_window_entity = app_state.unified_window_entity.clone();
-                                                                    eprintln!("Got unified_window_entity: {:?}", unified_window_entity.is_some());
-
-                                                                    if let Some(unified_window_entity) = unified_window_entity {
-                                                                        eprintln!("Updating unified window...");
-                                                                        unified_window_entity.update(cx, |unified_window, app_cx| {
-                                                                            let controls_entity = unified_window.controls.clone();
-                                                                            controls_entity.update(app_cx, |controls, cx| {
-                                                                                eprintln!("Calling set_clip_times({}, {})", start_ms, end_ms);
-                                                                                controls.set_clip_times(start_ms, end_ms, cx);
-                                                                            });
-                                                                        });
-                                                                        eprintln!("=== DONE ===");
-                                                                    }
-                                                                })
-                                                            )
-                                                        })
                                                         .child(entry.text.clone()),
                                                 ),
                                         )
@@ -916,8 +859,8 @@ impl Render for SubtitleWindow {
                     )
                     .track_scroll(&self.scroll_handle)
                     .w_full()
-                    .h_full(),
-                )
+                    .h_full()
+                })
             )
             })
             // Clip tab content

@@ -37,63 +37,67 @@ impl Render for InitialWindow {
                     .justify_center()
                     .items_center()
                     .child(
-                div()
-                    .id("open-file-button")
-                    .px_8()
-                    .py_4()
-                    .bg(theme.element_background())
-                    .rounded_lg()
-                    .cursor_pointer()
-                    .text_xl()
-                    .text_color(theme.text())
-                    .hover(move |style| style.bg(hover_bg))
-                    .on_click(|_, _window, cx| {
-                        let paths = cx.prompt_for_paths(PathPromptOptions {
-                            files: true,
-                            directories: false,
-                            multiple: false,
-                            prompt: Some("Select a video file".into()),
-                        });
+                        div()
+                            .id("open-file-button")
+                            .px_8()
+                            .py_4()
+                            .bg(theme.element_background())
+                            .rounded_lg()
+                            .cursor_pointer()
+                            .text_xl()
+                            .text_color(theme.text())
+                            .hover(move |style| style.bg(hover_bg))
+                            .on_click(|_, _window, cx| {
+                                let paths = cx.prompt_for_paths(PathPromptOptions {
+                                    files: true,
+                                    directories: false,
+                                    multiple: false,
+                                    prompt: Some("Select a video file".into()),
+                                });
 
-                        cx.spawn(async move |cx| {
-                            if let Ok(Ok(Some(paths))) = paths.await {
-                                if let Some(path) = paths.first() {
-                                    // Check if the file has a valid extension
-                                    let extension = path.extension().and_then(|e| e.to_str());
-                                    let supported_extensions =
-                                        ffmpeg_export::get_video_extensions();
+                                cx.spawn(async move |cx| {
+                                    if let Ok(Ok(Some(paths))) = paths.await {
+                                        if let Some(path) = paths.first() {
+                                            // Check if the file has a valid extension
+                                            let extension =
+                                                path.extension().and_then(|e| e.to_str());
+                                            let supported_extensions =
+                                                ffmpeg_export::get_video_extensions();
 
-                                    if let Some(ext) = extension {
-                                        let ext_lower = ext.to_lowercase();
-                                        if supported_extensions.contains(&ext_lower.as_str()) {
-                                            let path_string = path.to_string_lossy().to_string();
-                                            let path_clone = path_string.clone();
+                                            if let Some(ext) = extension {
+                                                let ext_lower = ext.to_lowercase();
+                                                if supported_extensions
+                                                    .contains(&ext_lower.as_str())
+                                                {
+                                                    let path_string =
+                                                        path.to_string_lossy().to_string();
+                                                    let path_clone = path_string.clone();
 
-                                            cx.update(|cx| {
-                                                crate::create_video_windows(
-                                                    cx,
-                                                    path_string,
-                                                    path_clone,
-                                                    None,
-                                                    None,
-                                                );
-                                            })
-                                            .ok();
-                                        } else {
-                                            // Invalid file type
-                                            eprintln!(
-                                                "Invalid file type. Supported formats: {}",
-                                                supported_extensions.join(", ")
-                                            );
+                                                    cx.update(|cx| {
+                                                        crate::create_video_windows(
+                                                            cx,
+                                                            path_string,
+                                                            path_clone,
+                                                            None,
+                                                            None,
+                                                        );
+                                                    })
+                                                    .ok();
+                                                } else {
+                                                    // Invalid file type
+                                                    eprintln!(
+                                                        "Invalid file type. Supported formats: {}",
+                                                        supported_extensions.join(", ")
+                                                    );
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                            }
-                        })
-                        .detach();
-                    })
-                    .child("Open File"),
-                    )
+                                })
+                                .detach();
+                            })
+                            .child("Open File"),
+                    ),
             )
     }
 }

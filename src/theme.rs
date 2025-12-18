@@ -31,9 +31,6 @@ pub fn init(cx: &mut App) {
 
     // Apply the configuration
     theme.apply_config(&config_rc);
-
-    // Disable shadows globally (helps with context menu shadow artifacts)
-    theme.shadow = false;
 }
 
 /// Helper trait extension for accessing common theme colors.
