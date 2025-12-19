@@ -432,16 +432,14 @@ impl SubtitleWindow {
             let controls = controls_entity.read(cx);
 
             // Inline the clip validation logic
-            let start_ms = controls
-                .clip_start_input
-                .read(cx)
-                .parse_time_ms()
-                .or(controls.clip_start);
-            let end_ms = controls
-                .clip_end_input
-                .read(cx)
-                .parse_time_ms()
-                .or(controls.clip_end);
+            let start_ms = crate::controls_window::ControlsWindow::parse_masked_time_ms(
+                &controls.clip_start_input.read(cx).value(),
+            )
+            .or(controls.clip_start);
+            let end_ms = crate::controls_window::ControlsWindow::parse_masked_time_ms(
+                &controls.clip_end_input.read(cx).value(),
+            )
+            .or(controls.clip_end);
 
             return start_ms.is_some() && end_ms.is_some() && start_ms.unwrap() < end_ms.unwrap();
         }

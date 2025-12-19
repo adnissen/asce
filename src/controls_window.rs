@@ -4,14 +4,14 @@ use gpui_component::ActiveTheme;
 use std::time::Instant;
 
 use crate::font_utils;
-use crate::time_input::{TimeInput, TimeInputChanged};
 use crate::video_player::ClockTime;
 use crate::AppState;
 use gpui_component::{
     checkbox::Checkbox,
+    input::{Input, InputEvent, InputState},
     select::{Select, SelectEvent, SelectItem, SelectState},
     slider::{Slider, SliderEvent, SliderState, SliderValue},
-    Disableable, IndexPath,
+    Disableable, IndexPath, Sizable,
 };
 
 // Wrapper for font names to implement SelectItem
@@ -79,8 +79,13 @@ impl ExportFormat {
 pub struct ControlsWindow {
     slider_state: Option<Entity<SliderState>>,
     display_subtitles_enabled: bool,
-    pub clip_start_input: Entity<TimeInput>,
-    pub clip_end_input: Entity<TimeInput>,
+    pub clip_start_input: Entity<InputState>,
+    pub clip_end_input: Entity<InputState>,
+    clip_start_error: bool, // Error state for clip start input (for border styling)
+    clip_end_error: bool,   // Error state for clip end input (for border styling)
+    // Pending values to apply to inputs (used when window isn't available)
+    pending_start_value: Option<String>,
+    pending_end_value: Option<String>,
     // Subtitle styling controls
     subtitle_font_select: Entity<SelectState<Vec<FontName>>>,
     subtitle_font_size_slider: Entity<SliderState>,
@@ -101,34 +106,78 @@ pub struct ControlsWindow {
 }
 
 impl ControlsWindow {
+    /// Parse a masked time string (HH:MM:SS.mmm) to milliseconds
+    /// Returns None if the value is empty or incomplete
+    pub fn parse_masked_time_ms(value: &str) -> Option<f32> {
+        // The masked value will be like "01:23:45.678" or partially filled
+        // If it contains underscores or is incomplete, it's not valid
+        if value.is_empty() || value.contains('_') {
+            return None;
+        }
+
+        // Expected format: HH:MM:SS.mmm
+        let parts: Vec<&str> = value.split(':').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+
+        let hours: u64 = parts[0].parse().ok()?;
+        let minutes: u64 = parts[1].parse().ok()?;
+        if minutes >= 60 {
+            return None;
+        }
+
+        let seconds_parts: Vec<&str> = parts[2].split('.').collect();
+        if seconds_parts.is_empty() || seconds_parts.len() > 2 {
+            return None;
+        }
+
+        let seconds: u64 = seconds_parts[0].parse().ok()?;
+        if seconds >= 60 {
+            return None;
+        }
+
+        let milliseconds: u64 = if seconds_parts.len() == 2 {
+            // Pad or truncate to 3 digits
+            let ms_str = seconds_parts[1];
+            if ms_str.len() > 3 {
+                return None;
+            }
+            let padded = format!("{:0<3}", ms_str);
+            padded.parse().ok()?
+        } else {
+            0
+        };
+
+        let total_ms = (hours * 60 * 60 * 1000) + (minutes * 60 * 1000) + (seconds * 1000) + milliseconds;
+        Some(total_ms as f32)
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Slider will be created once we know the video duration
 
         // Subtitle display will start as disabled (false)
 
-        // Create time input fields for clip start and end
-        let clip_start_input = cx.new(|cx| TimeInput::new(cx));
-        let clip_end_input = cx.new(|cx| TimeInput::new(cx));
+        // Create time input fields for clip start and end with mask pattern
+        // Format: HH:MM:SS.mmm where 9 = digit only
+        let clip_start_input = cx.new(|cx| InputState::new(window, cx).mask_pattern("99:99:99.999"));
+        let clip_end_input = cx.new(|cx| InputState::new(window, cx).mask_pattern("99:99:99.999"));
 
         // Subscribe to clip start input changes
-        cx.subscribe(
-            &clip_start_input,
-            |this, _, event: &TimeInputChanged, cx| {
-                if let Some(start_ms) = event.parsed_ms {
+        cx.subscribe(&clip_start_input, |this, state, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                let value = state.read(cx).value().to_string();
+                if let Some(start_ms) = Self::parse_masked_time_ms(&value) {
                     this.clip_start = Some(start_ms);
                     // Check if this violates the constraint (start >= end)
                     let has_error = this
                         .clip_end
                         .map(|end| start_ms >= end)
                         .unwrap_or(false);
-                    this.clip_start_input.update(cx, |input, cx| {
-                        input.set_error(has_error, cx);
-                    });
+                    this.clip_start_error = has_error;
                     // Clear error on end input if it was in error due to this conflict
                     if !has_error {
-                        this.clip_end_input.update(cx, |input, cx| {
-                            input.set_error(false, cx);
-                        });
+                        this.clip_end_error = false;
                         // Update clip_playback_end if we're currently playing a clip
                         // so the loop uses the current end time
                         if this.is_playing_clip {
@@ -139,37 +188,29 @@ impl ControlsWindow {
                     // Invalid or empty input, clear clip_start
                     this.clip_start = None;
                     // Clear any range error since there's no valid start
-                    this.clip_start_input.update(cx, |input, cx| {
-                        input.set_error(false, cx);
-                    });
-                    this.clip_end_input.update(cx, |input, cx| {
-                        input.set_error(false, cx);
-                    });
+                    this.clip_start_error = false;
+                    this.clip_end_error = false;
                 }
                 cx.notify();
-            },
-        )
+            }
+        })
         .detach();
 
         // Subscribe to clip end input changes
-        cx.subscribe(
-            &clip_end_input,
-            |this, _, event: &TimeInputChanged, cx| {
-                if let Some(end_ms) = event.parsed_ms {
+        cx.subscribe(&clip_end_input, |this, state, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                let value = state.read(cx).value().to_string();
+                if let Some(end_ms) = Self::parse_masked_time_ms(&value) {
                     this.clip_end = Some(end_ms);
                     // Check if this violates the constraint (end <= start)
                     let has_error = this
                         .clip_start
                         .map(|start| end_ms <= start)
                         .unwrap_or(false);
-                    this.clip_end_input.update(cx, |input, cx| {
-                        input.set_error(has_error, cx);
-                    });
+                    this.clip_end_error = has_error;
                     // Clear error on start input if it was in error due to this conflict
                     if !has_error {
-                        this.clip_start_input.update(cx, |input, cx| {
-                            input.set_error(false, cx);
-                        });
+                        this.clip_start_error = false;
                         // Update clip_playback_end if we're currently playing a clip
                         // so the loop uses the new end time
                         if this.is_playing_clip {
@@ -180,16 +221,12 @@ impl ControlsWindow {
                     // Invalid or empty input, clear clip_end
                     this.clip_end = None;
                     // Clear any range error since there's no valid end
-                    this.clip_end_input.update(cx, |input, cx| {
-                        input.set_error(false, cx);
-                    });
-                    this.clip_start_input.update(cx, |input, cx| {
-                        input.set_error(false, cx);
-                    });
+                    this.clip_end_error = false;
+                    this.clip_start_error = false;
                 }
                 cx.notify();
-            },
-        )
+            }
+        })
         .detach();
 
         // Get system fonts for the font selector
@@ -260,6 +297,10 @@ impl ControlsWindow {
             display_subtitles_enabled: false,
             clip_start_input,
             clip_end_input,
+            clip_start_error: false,
+            clip_end_error: false,
+            pending_start_value: None,
+            pending_end_value: None,
             subtitle_font_select,
             subtitle_font_size_slider,
             subtitle_bold_enabled: false,
@@ -397,9 +438,10 @@ impl ControlsWindow {
         let total_ms = milliseconds as u64;
         let total_secs = total_ms / 1000;
         let ms = total_ms % 1000;
-        let mins = total_secs / 60;
+        let hours = total_secs / 3600;
+        let mins = (total_secs % 3600) / 60;
         let secs = total_secs % 60;
-        format!("{:02}:{:02}.{:03}", mins, secs, ms)
+        format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, ms)
     }
 
     /// Set clip start and end times from milliseconds (e.g., from subtitle blocks)
@@ -411,26 +453,14 @@ impl ControlsWindow {
         self.clip_start = Some(start_ms_f32);
         self.clip_end = Some(end_ms_f32);
 
-        // Update the input fields
-        let start_formatted = Self::format_time_ms(start_ms_f32);
-        let end_formatted = Self::format_time_ms(end_ms_f32);
-
-        self.clip_start_input.update(cx, |input, cx| {
-            input.set_content(start_formatted, cx);
-        });
-
-        self.clip_end_input.update(cx, |input, cx| {
-            input.set_content(end_formatted, cx);
-        });
+        // Queue the formatted values to be applied during render (when window is available)
+        self.pending_start_value = Some(Self::format_time_ms(start_ms_f32));
+        self.pending_end_value = Some(Self::format_time_ms(end_ms_f32));
 
         // Check if times are invalid (start >= end) and set error state
         let has_error = start_ms_f32 >= end_ms_f32;
-        self.clip_start_input.update(cx, |input, cx| {
-            input.set_error(has_error, cx);
-        });
-        self.clip_end_input.update(cx, |input, cx| {
-            input.set_error(has_error, cx);
-        });
+        self.clip_start_error = has_error;
+        self.clip_end_error = has_error;
 
         // Update clip_playback_end if we're currently playing a clip
         if !has_error && self.is_playing_clip {
@@ -447,25 +477,17 @@ impl ControlsWindow {
         // Set the clip start
         self.clip_start = Some(start_ms_f32);
 
-        // Update the input field
-        let start_formatted = Self::format_time_ms(start_ms_f32);
-
-        self.clip_start_input.update(cx, |input, cx| {
-            input.set_content(start_formatted, cx);
-        });
+        // Queue the formatted value to be applied during render (when window is available)
+        self.pending_start_value = Some(Self::format_time_ms(start_ms_f32));
 
         // Check if this violates the constraint and set error state
         let has_error = self
             .clip_end
             .map(|end| start_ms_f32 >= end)
             .unwrap_or(false);
-        self.clip_start_input.update(cx, |input, cx| {
-            input.set_error(has_error, cx);
-        });
+        self.clip_start_error = has_error;
         if !has_error {
-            self.clip_end_input.update(cx, |input, cx| {
-                input.set_error(false, cx);
-            });
+            self.clip_end_error = false;
             // Update clip_playback_end if we're currently playing a clip
             if self.is_playing_clip {
                 self.clip_playback_end = self.clip_end;
@@ -482,25 +504,17 @@ impl ControlsWindow {
         // Set the clip end
         self.clip_end = Some(end_ms_f32);
 
-        // Update the input field
-        let end_formatted = Self::format_time_ms(end_ms_f32);
-
-        self.clip_end_input.update(cx, |input, cx| {
-            input.set_content(end_formatted, cx);
-        });
+        // Queue the formatted value to be applied during render (when window is available)
+        self.pending_end_value = Some(Self::format_time_ms(end_ms_f32));
 
         // Check if this violates the constraint and set error state
         let has_error = self
             .clip_start
             .map(|start| end_ms_f32 <= start)
             .unwrap_or(false);
-        self.clip_end_input.update(cx, |input, cx| {
-            input.set_error(has_error, cx);
-        });
+        self.clip_end_error = has_error;
         if !has_error {
-            self.clip_start_input.update(cx, |input, cx| {
-                input.set_error(false, cx);
-            });
+            self.clip_start_error = false;
             // Update clip_playback_end if we're currently playing a clip
             if self.is_playing_clip {
                 self.clip_playback_end = Some(end_ms_f32);
@@ -512,36 +526,25 @@ impl ControlsWindow {
 
     /// Check if there's a valid clip (start and end times set with start < end)
     pub fn has_valid_clip(&self, cx: &Context<Self>) -> bool {
-        let start_ms = self
-            .clip_start_input
-            .read(cx)
-            .parse_time_ms()
+        let start_ms = Self::parse_masked_time_ms(&self.clip_start_input.read(cx).value())
             .or(self.clip_start);
-        let end_ms = self
-            .clip_end_input
-            .read(cx)
-            .parse_time_ms()
-            .or(self.clip_end);
+        let end_ms =
+            Self::parse_masked_time_ms(&self.clip_end_input.read(cx).value()).or(self.clip_end);
 
         start_ms.is_some() && end_ms.is_some() && start_ms.unwrap() < end_ms.unwrap()
     }
 
     fn handle_export_click(&mut self, cx: &mut Context<Self>) {
         // Try to get times from input fields first, fall back to stored values
-        let clip_start_ms = self
-            .clip_start_input
-            .read(cx)
-            .parse_time_ms()
-            .or(self.clip_start)
-            .unwrap_or_else(|| {
-                eprintln!("Export error: clip start not set");
-                0.0
-            });
+        let clip_start_ms =
+            Self::parse_masked_time_ms(&self.clip_start_input.read(cx).value())
+                .or(self.clip_start)
+                .unwrap_or_else(|| {
+                    eprintln!("Export error: clip start not set");
+                    0.0
+                });
 
-        let clip_end_ms = self
-            .clip_end_input
-            .read(cx)
-            .parse_time_ms()
+        let clip_end_ms = Self::parse_masked_time_ms(&self.clip_end_input.read(cx).value())
             .or(self.clip_end)
             .unwrap_or_else(|| {
                 eprintln!("Export error: clip end not set");
@@ -680,6 +683,18 @@ impl ControlsWindow {
 
 impl Render for ControlsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Apply any pending input values (queued when window wasn't available)
+        if let Some(start_value) = self.pending_start_value.take() {
+            self.clip_start_input.update(cx, |input, cx| {
+                input.set_value(start_value, window, cx);
+            });
+        }
+        if let Some(end_value) = self.pending_end_value.take() {
+            self.clip_end_input.update(cx, |input, cx| {
+                input.set_value(end_value, window, cx);
+            });
+        }
+
         // Check if a video is loaded
         let app_state = cx.global::<AppState>();
         let has_video_loaded = app_state.has_video_loaded;
@@ -774,6 +789,11 @@ impl Render for ControlsWindow {
         let list_active_bg = theme.list_active_background(); // For active/highlight elements like Export button
         let border_variant_color = theme.border_variant();
         let surface_bg = theme.surface_background();
+        let error_color = theme.error(); // For input error borders
+
+        // Capture error states for styling
+        let clip_start_error = self.clip_start_error;
+        let clip_end_error = self.clip_end_error;
 
         div()
             .flex()
@@ -833,7 +853,19 @@ impl Render for ControlsWindow {
                                             .flex_col()
                                             .gap_1()
                                             .w(px(100.0))
-                                            .child(self.clip_start_input.clone())
+                                            .child(
+                                                div()
+                                                    .border_1()
+                                                    .rounded_md()
+                                                    .when(clip_start_error, |this| {
+                                                        this.border_color(error_color)
+                                                    })
+                                                    .child(
+                                                        Input::new(&self.clip_start_input)
+                                                            .xsmall()
+                                                            .bordered(false),
+                                                    ),
+                                            )
                                             .child(
                                                 div()
                                                     .px_2()
@@ -846,7 +878,7 @@ impl Render for ControlsWindow {
                                                     .hover(move |style| style.bg(bg))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
-                                                        cx.listener(|this, _, _, cx| {
+                                                        cx.listener(|this, _, window, cx| {
                                                             let current_time_ms =
                                                                 this.current_position * 1000.0;
 
@@ -859,8 +891,9 @@ impl Render for ControlsWindow {
                                                             this.clip_start_input.update(
                                                                 cx,
                                                                 |input, cx| {
-                                                                    input
-                                                                        .set_content(formatted, cx);
+                                                                    input.set_value(
+                                                                        formatted, window, cx,
+                                                                    );
                                                                 },
                                                             );
 
@@ -869,19 +902,9 @@ impl Render for ControlsWindow {
                                                                 .clip_end
                                                                 .map(|end| current_time_ms >= end)
                                                                 .unwrap_or(false);
-                                                            this.clip_start_input.update(
-                                                                cx,
-                                                                |input, cx| {
-                                                                    input.set_error(has_error, cx);
-                                                                },
-                                                            );
+                                                            this.clip_start_error = has_error;
                                                             if !has_error {
-                                                                this.clip_end_input.update(
-                                                                    cx,
-                                                                    |input, cx| {
-                                                                        input.set_error(false, cx);
-                                                                    },
-                                                                );
+                                                                this.clip_end_error = false;
                                                                 // Update clip_playback_end if playing
                                                                 if this.is_playing_clip {
                                                                     this.clip_playback_end =
@@ -902,7 +925,19 @@ impl Render for ControlsWindow {
                                             .flex_col()
                                             .gap_1()
                                             .w(px(100.0))
-                                            .child(self.clip_end_input.clone())
+                                            .child(
+                                                div()
+                                                    .border_1()
+                                                    .rounded_md()
+                                                    .when(clip_end_error, |this| {
+                                                        this.border_color(error_color)
+                                                    })
+                                                    .child(
+                                                        Input::new(&self.clip_end_input)
+                                                            .xsmall()
+                                                            .bordered(false),
+                                                    ),
+                                            )
                                             .child(
                                                 div()
                                                     .px_2()
@@ -915,7 +950,7 @@ impl Render for ControlsWindow {
                                                     .hover(move |style| style.bg(bg))
                                                     .on_mouse_down(
                                                         MouseButton::Left,
-                                                        cx.listener(|this, _, _, cx| {
+                                                        cx.listener(|this, _, window, cx| {
                                                             let current_time_ms =
                                                                 this.current_position * 1000.0;
 
@@ -928,8 +963,9 @@ impl Render for ControlsWindow {
                                                             this.clip_end_input.update(
                                                                 cx,
                                                                 |input, cx| {
-                                                                    input
-                                                                        .set_content(formatted, cx);
+                                                                    input.set_value(
+                                                                        formatted, window, cx,
+                                                                    );
                                                                 },
                                                             );
 
@@ -938,19 +974,9 @@ impl Render for ControlsWindow {
                                                                 .clip_start
                                                                 .map(|start| current_time_ms <= start)
                                                                 .unwrap_or(false);
-                                                            this.clip_end_input.update(
-                                                                cx,
-                                                                |input, cx| {
-                                                                    input.set_error(has_error, cx);
-                                                                },
-                                                            );
+                                                            this.clip_end_error = has_error;
                                                             if !has_error {
-                                                                this.clip_start_input.update(
-                                                                    cx,
-                                                                    |input, cx| {
-                                                                        input.set_error(false, cx);
-                                                                    },
-                                                                );
+                                                                this.clip_start_error = false;
                                                                 // Update clip_playback_end if playing
                                                                 if this.is_playing_clip {
                                                                     this.clip_playback_end =
@@ -965,16 +991,14 @@ impl Render for ControlsWindow {
                                             ),
                                     )
                                     .child({
-                                        let start_ms = self
-                                            .clip_start_input
-                                            .read(cx)
-                                            .parse_time_ms()
-                                            .or(self.clip_start);
-                                        let end_ms = self
-                                            .clip_end_input
-                                            .read(cx)
-                                            .parse_time_ms()
-                                            .or(self.clip_end);
+                                        let start_ms = Self::parse_masked_time_ms(
+                                            &self.clip_start_input.read(cx).value(),
+                                        )
+                                        .or(self.clip_start);
+                                        let end_ms = Self::parse_masked_time_ms(
+                                            &self.clip_end_input.read(cx).value(),
+                                        )
+                                        .or(self.clip_end);
                                         let duration = start_ms.and_then(|start| {
                                             end_ms.map(
                                                 |end| if end > start { end - start } else { 0.0 },
@@ -982,270 +1006,240 @@ impl Render for ControlsWindow {
                                         });
                                         let is_valid =
                                             duration.is_some() && duration.unwrap() > 0.0;
+                                        let loop_enabled = self.loop_enabled;
 
                                         div()
                                             .flex()
-                                            .flex_col()
-                                            .gap_1()
-                                            // Export format button - cycles through video/gif/audio
+                                            .flex_row()
+                                            .gap_2()
+                                            .items_end()
+                                            // Left: format, duration, export column
                                             .child(
                                                 div()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .bg(hover_bg)
-                                                    .rounded_md()
-                                                    .cursor_pointer()
-                                                    .text_xs()
-                                                    .text_color(text_color)
-                                                    .hover(move |style| style.bg(bg))
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(|this, _, _, cx| {
-                                                            // Cycle through formats: video -> gif -> audio -> video
-                                                            this.export_format =
-                                                                this.export_format.next();
-                                                            cx.notify();
-                                                        }),
-                                                    )
-                                                    .child(format!(
-                                                        "{}",
-                                                        self.export_format.as_str().to_uppercase()
-                                                    )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(if is_valid {
-                                                        text_color
-                                                    } else {
-                                                        text_disabled_color
-                                                    })
-                                                    .child(format!(
-                                                        "Duration: {}",
-                                                        Self::format_time_ms(
-                                                            duration.unwrap_or(0.0)
-                                                        )
-                                                    )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .px_3()
-                                                    .py_1()
-                                                    .rounded_md()
-                                                    .text_xs()
-                                                    .when(is_valid && !self.is_exporting, |this| {
-                                                        this.bg(list_active_bg)
-                                                            .cursor_pointer()
-                                                            .text_color(text_color)
-                                                            .hover(move |style| {
-                                                                style.bg(list_active_bg)
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    // Duration label
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(if is_valid {
+                                                                text_color
+                                                            } else {
+                                                                text_disabled_color
                                                             })
-                                                    })
-                                                    .when(!is_valid || self.is_exporting, |this| {
-                                                        this.bg(bg)
-                                                            .cursor_not_allowed()
-                                                            .text_color(text_disabled_color)
-                                                    })
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(|this, _, _, cx| {
-                                                            let start_ms = this
-                                                                .clip_start_input
-                                                                .read(cx)
-                                                                .parse_time_ms()
-                                                                .or(this.clip_start);
-                                                            let end_ms = this
-                                                                .clip_end_input
-                                                                .read(cx)
-                                                                .parse_time_ms()
-                                                                .or(this.clip_end);
-                                                            let duration =
-                                                                start_ms.and_then(|start| {
-                                                                    end_ms.map(|end| {
-                                                                        if end > start {
-                                                                            end - start
-                                                                        } else {
-                                                                            0.0
-                                                                        }
-                                                                    })
-                                                                });
-                                                            let is_valid = duration.is_some()
-                                                                && duration.unwrap() > 0.0;
-
-                                                            if !this.is_exporting && is_valid {
-                                                                this.handle_export_click(cx);
-                                                            }
-                                                        }),
+                                                            .child(format!(
+                                                                "Duration: {}",
+                                                                Self::format_time_ms(
+                                                                    duration.unwrap_or(0.0)
+                                                                )
+                                                            )),
                                                     )
-                                                    .child(if self.is_exporting {
-                                                        "Exporting..."
-                                                    } else {
-                                                        "Export"
-                                                    }),
+                                                    // Export format button - cycles through video/gif/audio
+                                                    .child(
+                                                        div()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .bg(hover_bg)
+                                                            .rounded_md()
+                                                            .cursor_pointer()
+                                                            .text_xs()
+                                                            .text_color(text_color)
+                                                            .hover(move |style| style.bg(bg))
+                                                            .on_mouse_down(
+                                                                MouseButton::Left,
+                                                                cx.listener(|this, _, _, cx| {
+                                                                    // Cycle through formats: video -> gif -> audio -> video
+                                                                    this.export_format =
+                                                                        this.export_format.next();
+                                                                    cx.notify();
+                                                                }),
+                                                            )
+                                                            .child(format!(
+                                                                "{}",
+                                                                self.export_format.as_str().to_uppercase()
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .px_3()
+                                                            .py_1()
+                                                            .rounded_md()
+                                                            .text_xs()
+                                                            .when(is_valid && !self.is_exporting, |this| {
+                                                                this.bg(list_active_bg)
+                                                                    .cursor_pointer()
+                                                                    .text_color(text_color)
+                                                                    .hover(move |style| {
+                                                                        style.bg(list_active_bg)
+                                                                    })
+                                                            })
+                                                            .when(!is_valid || self.is_exporting, |this| {
+                                                                this.bg(bg)
+                                                                    .cursor_not_allowed()
+                                                                    .text_color(text_disabled_color)
+                                                            })
+                                                            .on_mouse_down(
+                                                                MouseButton::Left,
+                                                                cx.listener(|this, _, _, cx| {
+                                                                    let start_ms = Self::parse_masked_time_ms(
+                                                                        &this.clip_start_input.read(cx).value(),
+                                                                    )
+                                                                    .or(this.clip_start);
+                                                                    let end_ms = Self::parse_masked_time_ms(
+                                                                        &this.clip_end_input.read(cx).value(),
+                                                                    )
+                                                                    .or(this.clip_end);
+                                                                    let duration =
+                                                                        start_ms.and_then(|start| {
+                                                                            end_ms.map(|end| {
+                                                                                if end > start {
+                                                                                    end - start
+                                                                                } else {
+                                                                                    0.0
+                                                                                }
+                                                                            })
+                                                                        });
+                                                                    let is_valid = duration.is_some()
+                                                                        && duration.unwrap() > 0.0;
+
+                                                                    if !this.is_exporting && is_valid {
+                                                                        this.handle_export_click(cx);
+                                                                    }
+                                                                }),
+                                                            )
+                                                            .child(if self.is_exporting {
+                                                                "Exporting..."
+                                                            } else {
+                                                                "Export"
+                                                            }),
+                                                    ),
+                                            )
+                                            // Right: Loop checkbox (small)
+                                            .child(
+                                                Checkbox::new("loop-checkbox")
+                                                    .label("Loop")
+                                                    .checked(loop_enabled)
+                                                    .disabled(!is_valid)
+                                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                                        this.loop_enabled = *checked;
+                                                        cx.notify();
+                                                    })),
                                             )
                                     }),
                             ), // Display total clip length and export button (always visible, greyed out if invalid)
                     )
-                    // Center: Loop checkbox and Play/pause and Play Clip buttons
-                    .child({
-                        let start_ms = self
-                            .clip_start_input
-                            .read(cx)
-                            .parse_time_ms()
-                            .or(self.clip_start);
-                        let end_ms = self
-                            .clip_end_input
-                            .read(cx)
-                            .parse_time_ms()
-                            .or(self.clip_end);
-                        let has_valid_clip = start_ms.is_some()
-                            && end_ms.is_some()
-                            && start_ms.unwrap() < end_ms.unwrap();
-                        let loop_enabled = self.loop_enabled;
-
+                    // Center: Play/pause and Play Clip buttons
+                    .child(
                         div()
                             .flex()
-                            .flex_col()
                             .items_center()
                             .gap_2()
-                            // Loop checkbox (only enabled when clip is set)
-                            .child(
-                                Checkbox::new("loop-checkbox")
-                                    .label("Loop")
-                                    .checked(loop_enabled)
-                                    .disabled(!has_valid_clip)
-                                    .on_click(cx.listener(|this, checked, _, cx| {
-                                        this.loop_enabled = *checked;
-                                        cx.notify();
-                                    })),
-                            )
-                            // Play buttons row
                             .child(
                                 div()
-                                    .flex()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .px_6()
-                                            .py_3()
-                                            .bg(hover_bg)
-                                            .rounded_md()
+                                    .px_6()
+                                    .py_3()
+                                    .bg(hover_bg)
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .text_color(text_color)
+                                    .hover(move |style| style.bg(bg))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app_state = cx.global::<AppState>();
+                                            let video_player = app_state.video_player.clone();
+                                            if let Ok(player) = video_player.lock() {
+                                                if this.is_playing {
+                                                    if let Err(e) = player.pause() {
+                                                        eprintln!("Failed to pause: {}", e);
+                                                    }
+                                                } else {
+                                                    if let Err(e) = player.play() {
+                                                        eprintln!("Failed to play: {}", e);
+                                                    }
+                                                }
+                                            };
+                                        }),
+                                    )
+                                    .child(if self.is_playing { "Pause" } else { "Play" }),
+                            )
+                            .child({
+                                let start_ms = Self::parse_masked_time_ms(
+                                    &self.clip_start_input.read(cx).value(),
+                                )
+                                .or(self.clip_start);
+                                let end_ms = Self::parse_masked_time_ms(
+                                    &self.clip_end_input.read(cx).value(),
+                                )
+                                .or(self.clip_end);
+                                let is_valid = start_ms.is_some()
+                                    && end_ms.is_some()
+                                    && start_ms.unwrap() < end_ms.unwrap();
+
+                                div()
+                                    .px_6()
+                                    .py_3()
+                                    .rounded_md()
+                                    .when(is_valid, |this| {
+                                        this.bg(hover_bg)
                                             .cursor_pointer()
                                             .text_color(text_color)
                                             .hover(move |style| style.bg(bg))
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(|this, _, _, cx| {
+                                    })
+                                    .when(!is_valid, |this| {
+                                        this.bg(bg)
+                                            .cursor_not_allowed()
+                                            .text_color(text_disabled_color)
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            let start_ms = Self::parse_masked_time_ms(
+                                                &this.clip_start_input.read(cx).value(),
+                                            )
+                                            .or(this.clip_start);
+                                            let end_ms = Self::parse_masked_time_ms(
+                                                &this.clip_end_input.read(cx).value(),
+                                            )
+                                            .or(this.clip_end);
+
+                                            if let (Some(start), Some(end)) = (start_ms, end_ms) {
+                                                if start < end {
+                                                    // Seek to start and play
                                                     let app_state = cx.global::<AppState>();
-                                                    let video_player = app_state.video_player.clone();
+                                                    let video_player =
+                                                        app_state.video_player.clone();
+
                                                     if let Ok(player) = video_player.lock() {
-                                                        if this.is_playing {
-                                                            if let Err(e) = player.pause() {
-                                                                eprintln!("Failed to pause: {}", e);
-                                                            }
+                                                        // Convert milliseconds to nanoseconds for seeking
+                                                        let nanos = (start * 1_000_000.0) as u64;
+                                                        let clock_time =
+                                                            ClockTime::from_nseconds(nanos);
+
+                                                        if let Err(e) = player.seek(clock_time) {
+                                                            eprintln!(
+                                                                "Failed to seek to clip start: {}",
+                                                                e
+                                                            );
+                                                        } else if let Err(e) = player.play() {
+                                                            eprintln!("Failed to play clip: {}", e);
                                                         } else {
-                                                            if let Err(e) = player.play() {
-                                                                eprintln!("Failed to play: {}", e);
-                                                            }
+                                                            // Set up clip playback mode
+                                                            this.is_playing_clip = true;
+                                                            this.clip_playback_end = Some(end);
+                                                            this.last_seek_time = Some(
+                                                                this.current_position * 1000.0,
+                                                            );
                                                         }
                                                     };
-                                                }),
-                                            )
-                                            .child(if self.is_playing { "Pause" } else { "Play" }),
+                                                }
+                                            }
+                                        }),
                                     )
-                                    .child({
-                                        let start_ms = self
-                                            .clip_start_input
-                                            .read(cx)
-                                            .parse_time_ms()
-                                            .or(self.clip_start);
-                                        let end_ms = self
-                                            .clip_end_input
-                                            .read(cx)
-                                            .parse_time_ms()
-                                            .or(self.clip_end);
-                                        let is_valid = start_ms.is_some()
-                                            && end_ms.is_some()
-                                            && start_ms.unwrap() < end_ms.unwrap();
-
-                                        div()
-                                            .px_6()
-                                            .py_3()
-                                            .rounded_md()
-                                            .when(is_valid, |this| {
-                                                this.bg(hover_bg)
-                                                    .cursor_pointer()
-                                                    .text_color(text_color)
-                                                    .hover(move |style| style.bg(bg))
-                                            })
-                                            .when(!is_valid, |this| {
-                                                this.bg(bg)
-                                                    .cursor_not_allowed()
-                                                    .text_color(text_disabled_color)
-                                            })
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(|this, _, _, cx| {
-                                                    let start_ms = this
-                                                        .clip_start_input
-                                                        .read(cx)
-                                                        .parse_time_ms()
-                                                        .or(this.clip_start);
-                                                    let end_ms = this
-                                                        .clip_end_input
-                                                        .read(cx)
-                                                        .parse_time_ms()
-                                                        .or(this.clip_end);
-
-                                                    if let (Some(start), Some(end)) =
-                                                        (start_ms, end_ms)
-                                                    {
-                                                        if start < end {
-                                                            // Seek to start and play
-                                                            let app_state = cx.global::<AppState>();
-                                                            let video_player =
-                                                                app_state.video_player.clone();
-
-                                                            if let Ok(player) = video_player.lock()
-                                                            {
-                                                                // Convert milliseconds to nanoseconds for seeking
-                                                                let nanos =
-                                                                    (start * 1_000_000.0) as u64;
-                                                                let clock_time =
-                                                                    ClockTime::from_nseconds(nanos);
-
-                                                                if let Err(e) =
-                                                                    player.seek(clock_time)
-                                                                {
-                                                                    eprintln!(
-                                                                    "Failed to seek to clip start: {}",
-                                                                    e
-                                                                );
-                                                                } else if let Err(e) = player.play()
-                                                                {
-                                                                    eprintln!(
-                                                                        "Failed to play clip: {}",
-                                                                        e
-                                                                    );
-                                                                } else {
-                                                                    // Set up clip playback mode
-                                                                    this.is_playing_clip = true;
-                                                                    this.clip_playback_end =
-                                                                        Some(end);
-                                                                    this.last_seek_time = Some(
-                                                                        this.current_position
-                                                                            * (1000 as f32),
-                                                                    );
-                                                                }
-                                                            };
-                                                        }
-                                                    }
-                                                }),
-                                            )
-                                            .child("Play Clip")
-                                    }),
-                            )
-                    })
+                                    .child("Play Clip")
+                            }),
+                    )
                     // Right side: Display subtitles checkbox and styling controls
                     .child({
                         let display_subtitles_enabled = self.display_subtitles_enabled;

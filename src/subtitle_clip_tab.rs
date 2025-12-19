@@ -228,16 +228,14 @@ impl SubtitleClipTab {
             let controls = controls_entity.read(cx);
 
             // Get clip times (as f32 milliseconds)
-            let start_ms_f32 = controls
-                .clip_start_input
-                .read(cx)
-                .parse_time_ms()
-                .or(controls.clip_start);
-            let end_ms_f32 = controls
-                .clip_end_input
-                .read(cx)
-                .parse_time_ms()
-                .or(controls.clip_end);
+            let start_ms_f32 = crate::controls_window::ControlsWindow::parse_masked_time_ms(
+                &controls.clip_start_input.read(cx).value(),
+            )
+            .or(controls.clip_start);
+            let end_ms_f32 = crate::controls_window::ControlsWindow::parse_masked_time_ms(
+                &controls.clip_end_input.read(cx).value(),
+            )
+            .or(controls.clip_end);
 
             if let (Some(start), Some(end)) = (start_ms_f32, end_ms_f32) {
                 if start < end {
