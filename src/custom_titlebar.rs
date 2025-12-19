@@ -1,6 +1,6 @@
 use crate::theme::OneDarkExt;
 use gpui::{
-    div, prelude::FluentBuilder, px, svg, Context, InteractiveElement, IntoElement, MouseButton,
+    div, prelude::FluentBuilder, px, Context, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
 };
 use gpui_component::ActiveTheme;
@@ -108,105 +108,76 @@ impl Render for CustomTitlebar {
                             .child(self.title.clone()),
                     ),
             )
-            .child(
-                // Right side: Window controls
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .h_full()
-                    .gap_2()
-                    .pr_2()
-                    .children(vec![
-                        // Minimize button
-                        div()
-                            .id("minimize-button")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(30.0))
-                            .rounded_sm()
-                            .hover(move |style| style.bg(hover_bg))
-                            .active(move |style| style.bg(active_bg))
-                            .on_click(cx.listener(|_, _, window, _| {
-                                window.minimize_window();
-                            }))
-                            .child(
-                                // Use Unicode character on Windows, SVG on other platforms
-                                div()
-                                    .when(cfg!(target_os = "windows"), |this| {
-                                        this.text_size(px(16.0))
-                                            .text_color(text_muted_color)
-                                            .child("─")
-                                    })
-                                    .when(!cfg!(target_os = "windows"), |this| {
-                                        this.text_color(text_muted_color).child(
-                                            svg()
-                                                .path("M 0,5 H 10")
-                                                .size(px(10.0))
-                                                .text_color(text_muted_color),
-                                        )
-                                    }),
-                            ),
-                        // Maximize/Restore button
-                        div()
-                            .id("maximize-button")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(30.0))
-                            .rounded_sm()
-                            .hover(move |style| style.bg(hover_bg))
-                            .active(move |style| style.bg(active_bg))
-                            .on_click(cx.listener(|_, _, window, _| {
-                                window.zoom_window();
-                            }))
-                            .child(
-                                // Use Unicode character on Windows, SVG on other platforms
-                                div()
-                                    .when(cfg!(target_os = "windows"), |this| {
-                                        this.text_size(px(14.0))
-                                            .text_color(text_muted_color)
-                                            .child("□")
-                                    })
-                                    .when(!cfg!(target_os = "windows"), |this| {
-                                        this.text_color(text_muted_color).child(
-                                            svg()
-                                                .path("M 0,0 H 10 V 10 H 0 Z M 0,1 H 10")
-                                                .size(px(10.0))
-                                                .text_color(text_muted_color),
-                                        )
-                                    }),
-                            ),
-                        // Close button
-                        div()
-                            .id("close-button")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(30.0))
-                            .rounded_sm()
-                            .hover(move |style| style.bg(error_bg))
-                            .active(move |style| style.bg(error_bg))
-                            .on_click(cx.listener(|_, _, window, _| {
-                                window.remove_window();
-                            }))
-                            .child(
-                                // Use Unicode character on Windows, SVG on other platforms
-                                div()
-                                    .when(cfg!(target_os = "windows"), |this| {
-                                        this.text_size(px(14.0)).text_color(text_color).child("✕")
-                                    })
-                                    .when(!cfg!(target_os = "windows"), |this| {
-                                        this.text_color(text_color).child(
-                                            svg()
-                                                .path("M 0,0 L 10,10 M 10,0 L 0,10")
-                                                .size(px(10.0))
-                                                .text_color(text_color),
-                                        )
-                                    }),
-                            ),
-                    ]),
-            )
+            // Right side: Window controls (Windows only - macOS uses native traffic lights)
+            .when(cfg!(target_os = "windows"), |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h_full()
+                        .gap_2()
+                        .pr_2()
+                        .children(vec![
+                            // Minimize button
+                            div()
+                                .id("minimize-button")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(30.0))
+                                .rounded_sm()
+                                .hover(move |style| style.bg(hover_bg))
+                                .active(move |style| style.bg(active_bg))
+                                .on_click(cx.listener(|_, _, window, _| {
+                                    window.minimize_window();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(16.0))
+                                        .text_color(text_muted_color)
+                                        .child("─"),
+                                ),
+                            // Maximize/Restore button
+                            div()
+                                .id("maximize-button")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(30.0))
+                                .rounded_sm()
+                                .hover(move |style| style.bg(hover_bg))
+                                .active(move |style| style.bg(active_bg))
+                                .on_click(cx.listener(|_, _, window, _| {
+                                    window.zoom_window();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(14.0))
+                                        .text_color(text_muted_color)
+                                        .child("□"),
+                                ),
+                            // Close button
+                            div()
+                                .id("close-button")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(30.0))
+                                .rounded_sm()
+                                .hover(move |style| style.bg(error_bg))
+                                .active(move |style| style.bg(error_bg))
+                                .on_click(cx.listener(|_, _, window, _| {
+                                    window.remove_window();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(14.0))
+                                        .text_color(text_color)
+                                        .child("✕"),
+                                ),
+                        ]),
+                )
+            })
     }
 }
