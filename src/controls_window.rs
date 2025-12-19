@@ -4,14 +4,14 @@ use gpui_component::ActiveTheme;
 use std::time::Instant;
 
 use crate::font_utils;
-use crate::time_input::TimeInput;
+use crate::time_input::{TimeInput, TimeInputChanged};
 use crate::video_player::ClockTime;
 use crate::AppState;
 use gpui_component::{
     checkbox::Checkbox,
     select::{Select, SelectEvent, SelectItem, SelectState},
     slider::{Slider, SliderEvent, SliderState, SliderValue},
-    IndexPath,
+    Disableable, IndexPath,
 };
 
 // Wrapper for font names to implement SelectItem
@@ -97,6 +97,7 @@ pub struct ControlsWindow {
     clip_playback_end: Option<f32>, // milliseconds - when to stop during clip playback
     last_seek_time: Option<f32>,    // milliseconds - video time when user clicked "Play Clip"
     last_render_time: Instant,      // For rate limiting renders to 30 FPS
+    loop_enabled: bool,             // When true, loop back to clip start instead of pausing
 }
 
 impl ControlsWindow {
@@ -108,6 +109,88 @@ impl ControlsWindow {
         // Create time input fields for clip start and end
         let clip_start_input = cx.new(|cx| TimeInput::new(cx));
         let clip_end_input = cx.new(|cx| TimeInput::new(cx));
+
+        // Subscribe to clip start input changes
+        cx.subscribe(
+            &clip_start_input,
+            |this, _, event: &TimeInputChanged, cx| {
+                if let Some(start_ms) = event.parsed_ms {
+                    this.clip_start = Some(start_ms);
+                    // Check if this violates the constraint (start >= end)
+                    let has_error = this
+                        .clip_end
+                        .map(|end| start_ms >= end)
+                        .unwrap_or(false);
+                    this.clip_start_input.update(cx, |input, cx| {
+                        input.set_error(has_error, cx);
+                    });
+                    // Clear error on end input if it was in error due to this conflict
+                    if !has_error {
+                        this.clip_end_input.update(cx, |input, cx| {
+                            input.set_error(false, cx);
+                        });
+                        // Update clip_playback_end if we're currently playing a clip
+                        // so the loop uses the current end time
+                        if this.is_playing_clip {
+                            this.clip_playback_end = this.clip_end;
+                        }
+                    }
+                } else {
+                    // Invalid or empty input, clear clip_start
+                    this.clip_start = None;
+                    // Clear any range error since there's no valid start
+                    this.clip_start_input.update(cx, |input, cx| {
+                        input.set_error(false, cx);
+                    });
+                    this.clip_end_input.update(cx, |input, cx| {
+                        input.set_error(false, cx);
+                    });
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+
+        // Subscribe to clip end input changes
+        cx.subscribe(
+            &clip_end_input,
+            |this, _, event: &TimeInputChanged, cx| {
+                if let Some(end_ms) = event.parsed_ms {
+                    this.clip_end = Some(end_ms);
+                    // Check if this violates the constraint (end <= start)
+                    let has_error = this
+                        .clip_start
+                        .map(|start| end_ms <= start)
+                        .unwrap_or(false);
+                    this.clip_end_input.update(cx, |input, cx| {
+                        input.set_error(has_error, cx);
+                    });
+                    // Clear error on start input if it was in error due to this conflict
+                    if !has_error {
+                        this.clip_start_input.update(cx, |input, cx| {
+                            input.set_error(false, cx);
+                        });
+                        // Update clip_playback_end if we're currently playing a clip
+                        // so the loop uses the new end time
+                        if this.is_playing_clip {
+                            this.clip_playback_end = Some(end_ms);
+                        }
+                    }
+                } else {
+                    // Invalid or empty input, clear clip_end
+                    this.clip_end = None;
+                    // Clear any range error since there's no valid end
+                    this.clip_end_input.update(cx, |input, cx| {
+                        input.set_error(false, cx);
+                    });
+                    this.clip_start_input.update(cx, |input, cx| {
+                        input.set_error(false, cx);
+                    });
+                }
+                cx.notify();
+            },
+        )
+        .detach();
 
         // Get system fonts for the font selector
         let system_fonts: Vec<FontName> = font_utils::get_system_fonts()
@@ -192,6 +275,7 @@ impl ControlsWindow {
             clip_playback_end: None,
             last_seek_time: None,
             last_render_time: Instant::now(),
+            loop_enabled: false,
         }
     }
 
@@ -339,23 +423,26 @@ impl ControlsWindow {
             input.set_content(end_formatted, cx);
         });
 
+        // Check if times are invalid (start >= end) and set error state
+        let has_error = start_ms_f32 >= end_ms_f32;
+        self.clip_start_input.update(cx, |input, cx| {
+            input.set_error(has_error, cx);
+        });
+        self.clip_end_input.update(cx, |input, cx| {
+            input.set_error(has_error, cx);
+        });
+
+        // Update clip_playback_end if we're currently playing a clip
+        if !has_error && self.is_playing_clip {
+            self.clip_playback_end = Some(end_ms_f32);
+        }
+
         cx.notify();
     }
 
     /// Set only the clip start time from milliseconds
     pub fn set_clip_start(&mut self, start_ms: u64, cx: &mut Context<Self>) {
         let start_ms_f32 = start_ms as f32;
-
-        // Check if this would violate the constraint (start >= end)
-        if let Some(end) = self.clip_end {
-            if start_ms_f32 >= end {
-                // Unset clip_end if start would be after or equal to it
-                self.clip_end = None;
-                self.clip_end_input.update(cx, |input, cx| {
-                    input.set_content("".to_string(), cx);
-                });
-            }
-        }
 
         // Set the clip start
         self.clip_start = Some(start_ms_f32);
@@ -367,23 +454,30 @@ impl ControlsWindow {
             input.set_content(start_formatted, cx);
         });
 
+        // Check if this violates the constraint and set error state
+        let has_error = self
+            .clip_end
+            .map(|end| start_ms_f32 >= end)
+            .unwrap_or(false);
+        self.clip_start_input.update(cx, |input, cx| {
+            input.set_error(has_error, cx);
+        });
+        if !has_error {
+            self.clip_end_input.update(cx, |input, cx| {
+                input.set_error(false, cx);
+            });
+            // Update clip_playback_end if we're currently playing a clip
+            if self.is_playing_clip {
+                self.clip_playback_end = self.clip_end;
+            }
+        }
+
         cx.notify();
     }
 
     /// Set only the clip end time from milliseconds
     pub fn set_clip_end(&mut self, end_ms: u64, cx: &mut Context<Self>) {
         let end_ms_f32 = end_ms as f32;
-
-        // Check if this would violate the constraint (end <= start)
-        if let Some(start) = self.clip_start {
-            if end_ms_f32 <= start {
-                // Unset clip_start if end would be before or equal to it
-                self.clip_start = None;
-                self.clip_start_input.update(cx, |input, cx| {
-                    input.set_content("".to_string(), cx);
-                });
-            }
-        }
 
         // Set the clip end
         self.clip_end = Some(end_ms_f32);
@@ -394,6 +488,24 @@ impl ControlsWindow {
         self.clip_end_input.update(cx, |input, cx| {
             input.set_content(end_formatted, cx);
         });
+
+        // Check if this violates the constraint and set error state
+        let has_error = self
+            .clip_start
+            .map(|start| end_ms_f32 <= start)
+            .unwrap_or(false);
+        self.clip_end_input.update(cx, |input, cx| {
+            input.set_error(has_error, cx);
+        });
+        if !has_error {
+            self.clip_start_input.update(cx, |input, cx| {
+                input.set_error(false, cx);
+            });
+            // Update clip_playback_end if we're currently playing a clip
+            if self.is_playing_clip {
+                self.clip_playback_end = Some(end_ms_f32);
+            }
+        }
 
         cx.notify();
     }
@@ -480,6 +592,7 @@ impl ControlsWindow {
         let display_subtitles = app_state.display_subtitles;
         let selected_subtitle_track = app_state.selected_subtitle_track;
         let source_video_width = app_state.source_video_width;
+        let loop_enabled = self.loop_enabled;
 
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(output_path))) = path_receiver.await {
@@ -516,6 +629,7 @@ impl ControlsWindow {
                                     display_subtitles,
                                     selected_subtitle_track,
                                     source_video_width,
+                                    loop_enabled,
                                 )
                             }
                             ExportFormat::Audio => {
@@ -595,19 +709,35 @@ impl Render for ControlsWindow {
                             .last_seek_time
                             .map_or(true, |seek_time| (current_time_ms - seek_time).abs() > 0.1);
                         if past_seek_time && current_time_ms >= end_time_ms {
-                            // Stop clip playback
-                            t.is_playing_clip = false;
-                            t.clip_playback_end = None;
-
-                            // Pause the player
                             let app_state = cx.global::<AppState>();
                             let video_player = app_state.video_player.clone();
-                            if let Ok(player) = video_player.lock() {
-                                println!("Pausing because of the clip playback end check");
-                                if let Err(e) = player.pause() {
-                                    eprintln!("Failed to pause after clip playback: {}", e);
+
+                            if t.loop_enabled {
+                                // Loop back to clip start
+                                if let Some(start_ms) = t.clip_start {
+                                    if let Ok(player) = video_player.lock() {
+                                        let nanos = (start_ms * 1_000_000.0) as u64;
+                                        let clock_time = ClockTime::from_nseconds(nanos);
+                                        if let Err(e) = player.seek(clock_time) {
+                                            eprintln!("Failed to seek to clip start for loop: {}", e);
+                                        }
+                                        // Update last_seek_time to prevent immediate re-trigger
+                                        t.last_seek_time = Some(current_time_ms);
+                                    };
                                 }
-                            };
+                            } else {
+                                // Stop clip playback
+                                t.is_playing_clip = false;
+                                t.clip_playback_end = None;
+
+                                // Pause the player
+                                if let Ok(player) = video_player.lock() {
+                                    println!("Pausing because of the clip playback end check");
+                                    if let Err(e) = player.pause() {
+                                        eprintln!("Failed to pause after clip playback: {}", e);
+                                    }
+                                };
+                            }
                         }
                     }
                 }
@@ -720,23 +850,6 @@ impl Render for ControlsWindow {
                                                             let current_time_ms =
                                                                 this.current_position * 1000.0;
 
-                                                            // Check if this would violate the constraint
-                                                            if let Some(end) = this.clip_end {
-                                                                if current_time_ms >= end {
-                                                                    // Unset clip_end if start would be after it
-                                                                    this.clip_end = None;
-                                                                    this.clip_end_input.update(
-                                                                        cx,
-                                                                        |input, cx| {
-                                                                            input.set_content(
-                                                                                "".to_string(),
-                                                                                cx,
-                                                                            );
-                                                                        },
-                                                                    );
-                                                                }
-                                                            }
-
                                                             this.clip_start = Some(current_time_ms);
 
                                                             // Update the input field
@@ -750,6 +863,31 @@ impl Render for ControlsWindow {
                                                                         .set_content(formatted, cx);
                                                                 },
                                                             );
+
+                                                            // Check if this violates the constraint and set error state
+                                                            let has_error = this
+                                                                .clip_end
+                                                                .map(|end| current_time_ms >= end)
+                                                                .unwrap_or(false);
+                                                            this.clip_start_input.update(
+                                                                cx,
+                                                                |input, cx| {
+                                                                    input.set_error(has_error, cx);
+                                                                },
+                                                            );
+                                                            if !has_error {
+                                                                this.clip_end_input.update(
+                                                                    cx,
+                                                                    |input, cx| {
+                                                                        input.set_error(false, cx);
+                                                                    },
+                                                                );
+                                                                // Update clip_playback_end if playing
+                                                                if this.is_playing_clip {
+                                                                    this.clip_playback_end =
+                                                                        this.clip_end;
+                                                                }
+                                                            }
 
                                                             cx.notify();
                                                         }),
@@ -781,23 +919,6 @@ impl Render for ControlsWindow {
                                                             let current_time_ms =
                                                                 this.current_position * 1000.0;
 
-                                                            // Check if this would violate the constraint
-                                                            if let Some(start) = this.clip_start {
-                                                                if current_time_ms <= start {
-                                                                    // Unset clip_start if end would be before it
-                                                                    this.clip_start = None;
-                                                                    this.clip_start_input.update(
-                                                                        cx,
-                                                                        |input, cx| {
-                                                                            input.set_content(
-                                                                                "".to_string(),
-                                                                                cx,
-                                                                            );
-                                                                        },
-                                                                    );
-                                                                }
-                                                            }
-
                                                             this.clip_end = Some(current_time_ms);
 
                                                             // Update the input field
@@ -811,6 +932,31 @@ impl Render for ControlsWindow {
                                                                         .set_content(formatted, cx);
                                                                 },
                                                             );
+
+                                                            // Check if this violates the constraint and set error state
+                                                            let has_error = this
+                                                                .clip_start
+                                                                .map(|start| current_time_ms <= start)
+                                                                .unwrap_or(false);
+                                                            this.clip_end_input.update(
+                                                                cx,
+                                                                |input, cx| {
+                                                                    input.set_error(has_error, cx);
+                                                                },
+                                                            );
+                                                            if !has_error {
+                                                                this.clip_start_input.update(
+                                                                    cx,
+                                                                    |input, cx| {
+                                                                        input.set_error(false, cx);
+                                                                    },
+                                                                );
+                                                                // Update clip_playback_end if playing
+                                                                if this.is_playing_clip {
+                                                                    this.clip_playback_end =
+                                                                        Some(current_time_ms);
+                                                                }
+                                                            }
 
                                                             cx.notify();
                                                         }),
@@ -940,121 +1086,166 @@ impl Render for ControlsWindow {
                                     }),
                             ), // Display total clip length and export button (always visible, greyed out if invalid)
                     )
-                    // Center: Play/pause and Play Clip buttons
-                    .child(
+                    // Center: Loop checkbox and Play/pause and Play Clip buttons
+                    .child({
+                        let start_ms = self
+                            .clip_start_input
+                            .read(cx)
+                            .parse_time_ms()
+                            .or(self.clip_start);
+                        let end_ms = self
+                            .clip_end_input
+                            .read(cx)
+                            .parse_time_ms()
+                            .or(self.clip_end);
+                        let has_valid_clip = start_ms.is_some()
+                            && end_ms.is_some()
+                            && start_ms.unwrap() < end_ms.unwrap();
+                        let loop_enabled = self.loop_enabled;
+
                         div()
                             .flex()
+                            .flex_col()
+                            .items_center()
                             .gap_2()
+                            // Loop checkbox (only enabled when clip is set)
+                            .child(
+                                Checkbox::new("loop-checkbox")
+                                    .label("Loop")
+                                    .checked(loop_enabled)
+                                    .disabled(!has_valid_clip)
+                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                        this.loop_enabled = *checked;
+                                        cx.notify();
+                                    })),
+                            )
+                            // Play buttons row
                             .child(
                                 div()
-                                    .px_6()
-                                    .py_3()
-                                    .bg(hover_bg)
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .text_color(text_color)
-                                    .hover(move |style| style.bg(bg))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            let app_state = cx.global::<AppState>();
-                                            let video_player = app_state.video_player.clone();
-                                            if let Ok(player) = video_player.lock() {
-                                                if this.is_playing {
-                                                    if let Err(e) = player.pause() {
-                                                        eprintln!("Failed to pause: {}", e);
-                                                    }
-                                                } else {
-                                                    if let Err(e) = player.play() {
-                                                        eprintln!("Failed to play: {}", e);
-                                                    }
-                                                }
-                                            };
-                                        }),
-                                    )
-                                    .child(if self.is_playing { "Pause" } else { "Play" }),
-                            )
-                            .child({
-                                let start_ms = self
-                                    .clip_start_input
-                                    .read(cx)
-                                    .parse_time_ms()
-                                    .or(self.clip_start);
-                                let end_ms = self
-                                    .clip_end_input
-                                    .read(cx)
-                                    .parse_time_ms()
-                                    .or(self.clip_end);
-                                let is_valid = start_ms.is_some()
-                                    && end_ms.is_some()
-                                    && start_ms.unwrap() < end_ms.unwrap();
-
-                                div()
-                                    .px_6()
-                                    .py_3()
-                                    .rounded_md()
-                                    .when(is_valid, |this| {
-                                        this.bg(hover_bg)
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .px_6()
+                                            .py_3()
+                                            .bg(hover_bg)
+                                            .rounded_md()
                                             .cursor_pointer()
                                             .text_color(text_color)
                                             .hover(move |style| style.bg(bg))
-                                    })
-                                    .when(!is_valid, |this| {
-                                        this.bg(bg)
-                                            .cursor_not_allowed()
-                                            .text_color(text_disabled_color)
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            let start_ms = this
-                                                .clip_start_input
-                                                .read(cx)
-                                                .parse_time_ms()
-                                                .or(this.clip_start);
-                                            let end_ms = this
-                                                .clip_end_input
-                                                .read(cx)
-                                                .parse_time_ms()
-                                                .or(this.clip_end);
-
-                                            if let (Some(start), Some(end)) = (start_ms, end_ms) {
-                                                if start < end {
-                                                    // Seek to start and play
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
                                                     let app_state = cx.global::<AppState>();
-                                                    let video_player =
-                                                        app_state.video_player.clone();
-
+                                                    let video_player = app_state.video_player.clone();
                                                     if let Ok(player) = video_player.lock() {
-                                                        // Convert milliseconds to nanoseconds for seeking
-                                                        let nanos = (start * 1_000_000.0) as u64;
-                                                        let clock_time =
-                                                            ClockTime::from_nseconds(nanos);
-
-                                                        if let Err(e) = player.seek(clock_time) {
-                                                            eprintln!(
-                                                                "Failed to seek to clip start: {}",
-                                                                e
-                                                            );
-                                                        } else if let Err(e) = player.play() {
-                                                            eprintln!("Failed to play clip: {}", e);
+                                                        if this.is_playing {
+                                                            if let Err(e) = player.pause() {
+                                                                eprintln!("Failed to pause: {}", e);
+                                                            }
                                                         } else {
-                                                            // Set up clip playback mode
-                                                            this.is_playing_clip = true;
-                                                            this.clip_playback_end = Some(end);
-                                                            this.last_seek_time = Some(
-                                                                this.current_position
-                                                                    * (1000 as f32),
-                                                            );
+                                                            if let Err(e) = player.play() {
+                                                                eprintln!("Failed to play: {}", e);
+                                                            }
                                                         }
                                                     };
-                                                }
-                                            }
-                                        }),
+                                                }),
+                                            )
+                                            .child(if self.is_playing { "Pause" } else { "Play" }),
                                     )
-                                    .child("Play Clip")
-                            }),
-                    )
+                                    .child({
+                                        let start_ms = self
+                                            .clip_start_input
+                                            .read(cx)
+                                            .parse_time_ms()
+                                            .or(self.clip_start);
+                                        let end_ms = self
+                                            .clip_end_input
+                                            .read(cx)
+                                            .parse_time_ms()
+                                            .or(self.clip_end);
+                                        let is_valid = start_ms.is_some()
+                                            && end_ms.is_some()
+                                            && start_ms.unwrap() < end_ms.unwrap();
+
+                                        div()
+                                            .px_6()
+                                            .py_3()
+                                            .rounded_md()
+                                            .when(is_valid, |this| {
+                                                this.bg(hover_bg)
+                                                    .cursor_pointer()
+                                                    .text_color(text_color)
+                                                    .hover(move |style| style.bg(bg))
+                                            })
+                                            .when(!is_valid, |this| {
+                                                this.bg(bg)
+                                                    .cursor_not_allowed()
+                                                    .text_color(text_disabled_color)
+                                            })
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
+                                                    let start_ms = this
+                                                        .clip_start_input
+                                                        .read(cx)
+                                                        .parse_time_ms()
+                                                        .or(this.clip_start);
+                                                    let end_ms = this
+                                                        .clip_end_input
+                                                        .read(cx)
+                                                        .parse_time_ms()
+                                                        .or(this.clip_end);
+
+                                                    if let (Some(start), Some(end)) =
+                                                        (start_ms, end_ms)
+                                                    {
+                                                        if start < end {
+                                                            // Seek to start and play
+                                                            let app_state = cx.global::<AppState>();
+                                                            let video_player =
+                                                                app_state.video_player.clone();
+
+                                                            if let Ok(player) = video_player.lock()
+                                                            {
+                                                                // Convert milliseconds to nanoseconds for seeking
+                                                                let nanos =
+                                                                    (start * 1_000_000.0) as u64;
+                                                                let clock_time =
+                                                                    ClockTime::from_nseconds(nanos);
+
+                                                                if let Err(e) =
+                                                                    player.seek(clock_time)
+                                                                {
+                                                                    eprintln!(
+                                                                    "Failed to seek to clip start: {}",
+                                                                    e
+                                                                );
+                                                                } else if let Err(e) = player.play()
+                                                                {
+                                                                    eprintln!(
+                                                                        "Failed to play clip: {}",
+                                                                        e
+                                                                    );
+                                                                } else {
+                                                                    // Set up clip playback mode
+                                                                    this.is_playing_clip = true;
+                                                                    this.clip_playback_end =
+                                                                        Some(end);
+                                                                    this.last_seek_time = Some(
+                                                                        this.current_position
+                                                                            * (1000 as f32),
+                                                                    );
+                                                                }
+                                                            };
+                                                        }
+                                                    }
+                                                }),
+                                            )
+                                            .child("Play Clip")
+                                    }),
+                            )
+                    })
                     // Right side: Display subtitles checkbox and styling controls
                     .child({
                         let display_subtitles_enabled = self.display_subtitles_enabled;

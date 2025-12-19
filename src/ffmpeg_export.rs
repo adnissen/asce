@@ -420,6 +420,7 @@ pub fn export_gif(
     display_subtitles: bool,
     subtitle_track: Option<usize>,
     source_video_width: u32,
+    loop_gif: bool,
 ) -> Result<(), String> {
     // Calculate duration
     let duration = end_secs - start_secs;
@@ -514,7 +515,7 @@ pub fn export_gif(
     cmd.arg("-vf")
         .arg(&vf_filter)
         .arg("-loop")
-        .arg("0") // Infinite loop
+        .arg(if loop_gif { "0" } else { "-1" }) // 0 = infinite loop, -1 = no loop
         .arg("-y") // Overwrite output file
         .arg(output_path);
 

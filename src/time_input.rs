@@ -9,12 +9,20 @@ use std::ops::Range;
 
 actions!(time_input, [Backspace]);
 
+/// Event emitted when the TimeInput content changes
+#[derive(Clone, Debug)]
+pub struct TimeInputChanged {
+    pub content: String,
+    pub parsed_ms: Option<f32>,
+}
+
 pub struct TimeInput {
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    external_error: bool,
 }
 
 impl TimeInput {
@@ -25,7 +33,14 @@ impl TimeInput {
             placeholder: "--:--.---".into(),
             last_layout: None,
             last_bounds: None,
+            external_error: false,
         }
+    }
+
+    /// Set an external error state (e.g., for range validation)
+    pub fn set_error(&mut self, error: bool, cx: &mut Context<Self>) {
+        self.external_error = error;
+        cx.notify();
     }
 
     pub fn content(&self) -> String {
@@ -84,10 +99,19 @@ impl TimeInput {
         self.content.is_empty() || self.parse_time_ms().is_some()
     }
 
+    /// Emit a change event with the current content
+    fn emit_change(&self, cx: &mut Context<Self>) {
+        cx.emit(TimeInputChanged {
+            content: self.content.to_string(),
+            parsed_ms: self.parse_time_ms(),
+        });
+    }
+
     fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
         let mut content = self.content.to_string();
         content.pop();
         self.content = content.into();
+        self.emit_change(cx);
         cx.notify();
     }
 }
@@ -144,6 +168,7 @@ impl EntityInputHandler for TimeInput {
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
+        self.emit_change(cx);
         cx.notify();
     }
 
@@ -355,9 +380,10 @@ impl Render for TimeInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_focused = self.focus_handle.is_focused(window);
         let is_valid = self.is_valid();
+        let has_error = !is_valid || self.external_error;
         let theme = cx.theme();
 
-        let border_color = if !is_valid {
+        let border_color = if has_error {
             theme.error()
         } else if is_focused {
             theme.border_focused()
@@ -395,3 +421,5 @@ impl Focusable for TimeInput {
         self.focus_handle.clone()
     }
 }
+
+impl gpui::EventEmitter<TimeInputChanged> for TimeInput {}
