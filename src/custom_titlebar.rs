@@ -1,9 +1,13 @@
-use crate::theme::OneDarkExt;
+use crate::theme::{OneDarkExt, ThemeRegistry};
+use crate::SwitchTheme;
 use gpui::{
-    div, prelude::FluentBuilder, px, Context, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    div, prelude::FluentBuilder, px, svg, Context, Corner, FontWeight, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
+    Styled, Window,
 };
-use gpui_component::ActiveTheme;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::menu::DropdownMenu;
+use gpui_component::{ActiveTheme, Theme};
 
 #[cfg(target_os = "windows")]
 use raw_window_handle::HasWindowHandle;
@@ -54,10 +58,51 @@ impl CustomTitlebar {
     fn start_window_drag(_window: &mut Window) {
         // No-op on non-Windows platforms
     }
+
+    /// Render the theme palette button with dropdown theme picker (Windows only)
+    #[cfg(target_os = "windows")]
+    fn render_theme_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::global(cx);
+        let current_theme_name = theme.theme_name().to_string();
+        let icon_color = theme.muted_foreground;
+
+        Button::new("theme-menu")
+            .ghost()
+            .compact()
+            .mr(px(8.0))
+            .child(
+                svg()
+                    .path("icons/palette.svg")
+                    .size(px(16.0))
+                    .text_color(icon_color),
+            )
+            .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _window, _cx| {
+                let current_name = current_theme_name.clone();
+                let registry = ThemeRegistry::new();
+
+                let mut menu = menu.scrollable(true).max_h(px(300.0));
+                for theme_variant in &registry.themes {
+                    let is_current = theme_variant.name == current_name;
+                    let theme_name: SharedString = theme_variant.name.clone().into();
+                    menu = menu.menu_with_check(
+                        theme_variant.name.clone(),
+                        is_current,
+                        Box::new(SwitchTheme(theme_name)),
+                    );
+                }
+                menu
+            })
+    }
 }
 
 impl Render for CustomTitlebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Render theme menu first (Windows only) to avoid borrow issues
+        #[cfg(target_os = "windows")]
+        let theme_menu = Some(self.render_theme_menu(cx).into_any_element());
+        #[cfg(not(target_os = "windows"))]
+        let theme_menu: Option<gpui::AnyElement> = None;
+
         let theme = cx.theme();
         // Pre-capture colors for use in closures
         let hover_bg = theme.element_hover();
@@ -77,6 +122,8 @@ impl Render for CustomTitlebar {
             .bg(theme.editor_background())
             .border_b_1()
             .border_color(hover_bg)
+            // Theme menu button (Windows only) - before the title area
+            .when_some(theme_menu, |this, menu| this.child(menu))
             .child(
                 // Left side: Title - this area is draggable on Windows
                 div()
@@ -85,12 +132,8 @@ impl Render for CustomTitlebar {
                     .items_center()
                     .h_full()
                     .flex_grow() // Take up remaining space to create a larger drag area
-                    // macOS needs extra padding for traffic lights
-                    .pl(if cfg!(target_os = "macos") {
-                        px(74.0)
-                    } else {
-                        px(16.0)
-                    })
+                    // macOS needs extra padding for traffic lights, Windows has no left padding (theme menu is there)
+                    .when(cfg!(target_os = "macos"), |this| this.pl(px(74.0)))
                     .pr_4()
                     // Enable window dragging on Windows when clicking title area
                     .when(cfg!(target_os = "windows"), |this| {
@@ -101,11 +144,20 @@ impl Render for CustomTitlebar {
                             }),
                         )
                     })
+                    // App name label
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(text_color)
+                            .child("asve"),
+                    )
+                    // Version number
+                    .child(
+                        div()
+                            .text_sm()
                             .text_color(text_muted_color)
-                            .child(self.title.clone()),
+                            .child(concat!(" v", env!("CARGO_PKG_VERSION"))),
                     ),
             )
             // Right side: Window controls (Windows only - macOS uses native traffic lights)

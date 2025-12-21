@@ -8,6 +8,7 @@ extern crate objc;
 
 use clap::Parser;
 
+mod assets;
 mod config;
 mod controls_window;
 mod custom_titlebar;
@@ -35,7 +36,7 @@ use video_player::ClockTime;
 /// Action to change the application theme
 #[derive(Action, Clone, PartialEq)]
 #[action(no_json)]
-struct SwitchTheme(SharedString);
+pub struct SwitchTheme(pub SharedString);
 
 use std::sync::{Arc, Mutex};
 
@@ -247,7 +248,7 @@ fn main() {
         }
     }
 
-    Application::new().run(move |cx: &mut App| {
+    Application::new().with_assets(assets::Assets).run(move |cx: &mut App| {
         cx.set_global(AppState::new());
 
         // Initialize gpui-component (required before using any gpui-component features)

@@ -247,6 +247,7 @@ dependencies = [
 name = "asve"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bindgen 0.70.1",
  "clap",
  "cocoa 0.26.0",
@@ -263,6 +264,7 @@ dependencies = [
  "pkg-config",
  "raw-window-handle",
  "ropey 1.6.1",
+ "rust-embed",
  "serde",
  "serde_json",
  "smallvec",
