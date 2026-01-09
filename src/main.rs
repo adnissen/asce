@@ -26,8 +26,8 @@ mod video_player;
 mod video_player_window;
 
 use gpui::{
-    actions, px, Action, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Entity,
-    Global, Menu, MenuItem, PathPromptOptions, SharedString, SystemMenuType, WindowOptions,
+    Action, AnyWindowHandle, App, AppContext, Application, BorrowAppContext, Entity, Global, Menu,
+    MenuItem, PathPromptOptions, SharedString, SystemMenuType, WindowOptions, actions, px,
 };
 use gpui_component::Theme;
 use unified_window::UnifiedWindow;
@@ -248,133 +248,135 @@ fn main() {
         }
     }
 
-    Application::new().with_assets(assets::Assets).run(move |cx: &mut App| {
-        cx.set_global(AppState::new());
+    Application::new()
+        .with_assets(assets::Assets)
+        .run(move |cx: &mut App| {
+            cx.set_global(AppState::new());
 
-        // Initialize gpui-component (required before using any gpui-component features)
-        gpui_component::init(cx);
+            // Initialize gpui-component (required before using any gpui-component features)
+            gpui_component::init(cx);
 
-        // Load config and initialize theme with saved preference
-        let app_config = config::Config::load();
-        theme::init_with_theme_name(app_config.theme_name.as_deref(), cx);
+            // Load config and initialize theme with saved preference
+            let app_config = config::Config::load();
+            theme::init_with_theme_name(app_config.theme_name.as_deref(), cx);
 
-        // Bring the menu bar to the foreground (so you can see the menu bar)
-        cx.activate(true);
-        // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
-        cx.on_action(quit);
-        cx.on_action(open_file);
+            // Bring the menu bar to the foreground (so you can see the menu bar)
+            cx.activate(true);
+            // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
+            cx.on_action(quit);
+            cx.on_action(open_file);
 
-        // Register the theme change action handler
-        cx.on_action(|action: &SwitchTheme, cx| {
-            let registry = theme::ThemeRegistry::new();
-            if let Some(theme_variant) = registry.find_theme(&action.0) {
-                theme::apply_theme(&theme_variant.config, cx);
-                // Refresh all windows to apply the theme
-                cx.refresh_windows();
+            // Register the theme change action handler
+            cx.on_action(|action: &SwitchTheme, cx| {
+                let registry = theme::ThemeRegistry::new();
+                if let Some(theme_variant) = registry.find_theme(&action.0) {
+                    theme::apply_theme(&theme_variant.config, cx);
+                    // Refresh all windows to apply the theme
+                    cx.refresh_windows();
 
-                // Save the theme selection to config
-                let mut app_config = config::Config::load();
-                app_config.theme_name = Some(action.0.to_string());
-                let _ = app_config.save();
+                    // Save the theme selection to config
+                    let mut app_config = config::Config::load();
+                    app_config.theme_name = Some(action.0.to_string());
+                    let _ = app_config.save();
 
-                // Update the menu to show the new checkmark
-                set_app_menus(cx);
-            }
-        });
+                    // Update the menu to show the new checkmark
+                    set_app_menus(cx);
+                }
+            });
 
-        // Add menu items
-        set_app_menus(cx);
+            // Add menu items
+            set_app_menus(cx);
 
-        // Check if a video path was provided via command line
-        if let Some(video_path) = cli.video_path {
-            // Validate the file exists and has a supported extension
-            let path = std::path::Path::new(&video_path);
-            if !path.exists() {
-                eprintln!("Error: File does not exist: {}", video_path);
-                std::process::exit(1);
-            }
+            // Check if a video path was provided via command line
+            if let Some(video_path) = cli.video_path {
+                // Validate the file exists and has a supported extension
+                let path = std::path::Path::new(&video_path);
+                if !path.exists() {
+                    eprintln!("Error: File does not exist: {}", video_path);
+                    std::process::exit(1);
+                }
 
-            let extension = path.extension().and_then(|e| e.to_str());
-            let supported_extensions = ffmpeg_export::get_video_extensions();
+                let extension = path.extension().and_then(|e| e.to_str());
+                let supported_extensions = ffmpeg_export::get_video_extensions();
 
-            if let Some(ext) = extension {
-                let ext_lower = ext.to_lowercase();
-                if supported_extensions.contains(&ext_lower.as_str()) {
-                    // Open the video directly
-                    println!("Opening video file: {}", video_path);
-                    let path_clone = video_path.clone();
-                    create_video_windows(
-                        cx,
-                        video_path,
-                        path_clone,
-                        parsed_clip_start,
-                        parsed_clip_end,
-                    );
+                if let Some(ext) = extension {
+                    let ext_lower = ext.to_lowercase();
+                    if supported_extensions.contains(&ext_lower.as_str()) {
+                        // Open the video directly
+                        println!("Opening video file: {}", video_path);
+                        let path_clone = video_path.clone();
+                        create_video_windows(
+                            cx,
+                            video_path,
+                            path_clone,
+                            parsed_clip_start,
+                            parsed_clip_end,
+                        );
+                    } else {
+                        eprintln!(
+                            "Error: Invalid file type. Supported formats: {}",
+                            supported_extensions.join(", ")
+                        );
+                        std::process::exit(1);
+                    }
                 } else {
-                    eprintln!(
-                        "Error: Invalid file type. Supported formats: {}",
-                        supported_extensions.join(", ")
-                    );
+                    eprintln!("Error: File has no extension");
                     std::process::exit(1);
                 }
             } else {
-                eprintln!("Error: File has no extension");
-                std::process::exit(1);
-            }
-        } else {
-            // No video path provided, create the unified window with disabled controls and ASCII portal
-            let total_width = 1260.0;
-            let total_height = 720.0;
+                // No video path provided, create the unified window with disabled controls and ASCII portal
+                let total_width = 1260.0;
+                let total_height = 720.0;
 
-            let unified_window_options = WindowOptions {
-                window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-                    None,
-                    gpui::size(px(total_width), px(total_height)),
-                    cx,
-                ))),
-                window_background: gpui::WindowBackgroundAppearance::Opaque,
-                focus: true,
-                is_movable: true,
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("asve".into()),
-                    appears_transparent: true,
-                    traffic_light_position: Some(gpui::point(px(8.0), px(12.0))),
+                let unified_window_options = WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
+                        None,
+                        gpui::size(px(total_width), px(total_height)),
+                        cx,
+                    ))),
+                    window_background: gpui::WindowBackgroundAppearance::Opaque,
+                    focus: true,
+                    is_movable: true,
+                    titlebar: Some(gpui::TitlebarOptions {
+                        title: Some("asve".into()),
+                        appears_transparent: true,
+                        traffic_light_position: Some(gpui::point(px(8.0), px(12.0))),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            };
+                };
 
-            // Store UnifiedWindow entity in a variable accessible to the closure
-            let unified_entity_holder: Arc<Mutex<Option<Entity<UnifiedWindow>>>> =
-                Arc::new(Mutex::new(None));
-            let holder_clone = unified_entity_holder.clone();
+                // Store UnifiedWindow entity in a variable accessible to the closure
+                let unified_entity_holder: Arc<Mutex<Option<Entity<UnifiedWindow>>>> =
+                    Arc::new(Mutex::new(None));
+                let holder_clone = unified_entity_holder.clone();
 
-            let window = cx
-                .open_window(unified_window_options, move |window, cx| {
-                    let unified_entity = cx.new(|cx| UnifiedWindow::new(window, cx));
+                let window = cx
+                    .open_window(unified_window_options, move |window, cx| {
+                        let unified_entity = cx.new(|cx| UnifiedWindow::new(window, cx));
 
-                    // Store the entity for later access
-                    if let Ok(mut holder) = holder_clone.lock() {
-                        *holder = Some(unified_entity.clone());
-                    }
+                        // Store the entity for later access
+                        if let Ok(mut holder) = holder_clone.lock() {
+                            *holder = Some(unified_entity.clone());
+                        }
 
-                    cx.new(|cx| {
-                        use gpui::AnyView;
-                        gpui_component::Root::new(AnyView::from(unified_entity), window, cx)
+                        cx.new(|cx| {
+                            use gpui::AnyView;
+                            gpui_component::Root::new(AnyView::from(unified_entity), window, cx)
+                        })
                     })
-                })
-                .unwrap();
+                    .unwrap();
 
-            // Store the unified window handle and entity
-            let unified_entity = unified_entity_holder.lock().unwrap().clone();
-            cx.update_global::<AppState, _>(|state, _| {
-                state.unified_window = Some(window.into());
-                state.unified_window_entity = unified_entity;
-            });
+                // Store the unified window handle and entity
+                let unified_entity = unified_entity_holder.lock().unwrap().clone();
+                cx.update_global::<AppState, _>(|state, _| {
+                    state.unified_window = Some(window.into());
+                    state.unified_window_entity = unified_entity;
+                });
 
-            println!("Unified window created (no video loaded)");
-        }
-    });
+                println!("Unified window created (no video loaded)");
+            }
+        });
 }
 
 /// Extract the native window handle from GPUI and create a child window/view for video rendering
@@ -754,7 +756,6 @@ pub fn create_video_windows(
                             .ok();
                     }
                 })
-                .ok();
             }
         })
         .detach();
@@ -785,8 +786,7 @@ fn open_file(_: &OpenFile, cx: &mut App) {
 
                         cx.update(|cx| {
                             create_video_windows(cx, path_string, path_clone, None, None);
-                        })
-                        .ok();
+                        });
                     } else {
                         // Invalid file type
                         eprintln!(

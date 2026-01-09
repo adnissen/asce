@@ -1,3 +1,4 @@
+use bindgen::RustEdition::Edition2024;
 use std::env;
 use std::path::PathBuf;
 
@@ -18,7 +19,9 @@ fn main() {
     println!("cargo:rustc-link-lib=mpv");
 
     // Generate bindings for libmpv
-    let mut builder = bindgen::Builder::default().header("wrapper.h");
+    let mut builder = bindgen::Builder::default()
+        .header("wrapper.h")
+        .rust_edition(Edition2024);
 
     // Add include paths
     for path in include_paths {
@@ -67,8 +70,10 @@ fn setup_windows() -> (Vec<PathBuf>, Option<PathBuf>) {
     let lib_path = mpv_root.clone();
 
     if !include_path.exists() {
-        panic!("MPV include directory not found at {}. Make sure you downloaded the development build (mpv-dev-*.7z)",
-               include_path.display());
+        panic!(
+            "MPV include directory not found at {}. Make sure you downloaded the development build (mpv-dev-*.7z)",
+            include_path.display()
+        );
     }
 
     (vec![include_path], Some(lib_path))

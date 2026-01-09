@@ -1,11 +1,11 @@
 [package]
 name = "asve"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed.git"}
-gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "749c69c159edff3a7f5f216647816f9ebb1ce970" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git"}
 raw-window-handle = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -17,7 +17,7 @@ gl = "0.14"
 image = "0.25"
 smallvec = "1.13"
 ropey = "1.6"
-sum_tree = { git = "https://github.com/zed-industries/zed.git", rev = "917148c5ce6b4801dee7ab191b6fb5144f84d0ea" }
+sum_tree = { git = "https://github.com/zed-industries/zed.git"}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
@@ -37,5 +37,5 @@ windows = { version = "0.61", features = [
 ] }
 
 [build-dependencies]
-bindgen = "0.70"
+bindgen = "0.72.1"
 pkg-config = "0.3"

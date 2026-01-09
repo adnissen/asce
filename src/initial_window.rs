@@ -1,5 +1,5 @@
 use crate::theme::OneDarkExt;
-use gpui::{div, prelude::*, Context, Entity, IntoElement, PathPromptOptions, Render, Window};
+use gpui::{Context, Entity, IntoElement, PathPromptOptions, Render, Window, div, prelude::*};
 use gpui_component::ActiveTheme;
 
 use crate::custom_titlebar::CustomTitlebar;
@@ -81,8 +81,7 @@ impl Render for InitialWindow {
                                                             None,
                                                             None,
                                                         );
-                                                    })
-                                                    .ok();
+                                                    });
                                                 } else {
                                                     // Invalid file type
                                                     eprintln!(
